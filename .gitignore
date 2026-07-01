@@ -1,0 +1,14 @@
+.env
+output/
+work/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.DS_Store
+.claude/
+/tests/sample_data/
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
