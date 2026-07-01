@@ -11,6 +11,7 @@ This tool automates the process of analyzing Zoom meeting recordings:
 3. **Transcribes** using Groq's Whisper (or uses Zoom's optional built-in transcript)
 4. **Extracts** structured insights: summary, key points, decisions, action items, questions
 5. **Generates** a markdown report + JSON insights file + full transcript
+6. **Exports** action items directly to Jira Cloud as tickets (optional)
 
 Designed to run entirely on free tiers: Groq free Whisper (~2,000 requests/day) and Groq free LLM (~6,000 tokens/min).
 
@@ -167,12 +168,30 @@ zoom-insights ~/Zoom_Recordings/meeting_2024_12_15.m4a --local --title "Team Sta
 zoom-insights ./recording.mp4 --local
 ```
 
+### Option 3: Export to Jira (optional)
+
+After processing a meeting, export action items as Jira tickets:
+
+```bash
+# Export insights to Jira Cloud
+zoom-insights jira --insights output/<meeting>/insights.json
+```
+
+This creates one Task ticket per action item with:
+- Action item description as title
+- Meeting summary and key points in description
+- Owner and due date (if available)
+
+Requires Jira Cloud credentials in `.env` (see [Jira Integration](#jira-integration) section).
+
 ### Enable debug logging
 
 ```bash
 zoom-insights 0 --debug
 # or with local files:
 zoom-insights /path/to/recording.mp4 --local --debug
+# or with Jira export:
+zoom-insights jira --insights output/<meeting>/insights.json --debug
 ```
 
 ## Output
