@@ -9,8 +9,8 @@ from zoom_insights.audio import (
     require_ffmpeg,
     to_compressed_audio,
     maybe_segment,
-    MAX_UPLOAD_MB,
-    SEGMENT_LENGTH_SECONDS,
+    GROQ_UPLOAD_CAP_MB,
+    SEGMENT_DURATION_SECONDS,
 )
 
 
@@ -80,7 +80,7 @@ class TestMaybeSegment:
     def test_maybe_segment_under_cap_returns_single_file(self, mocker):
         """Test that a file under the cap is returned as a single-item list."""
         mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
-        mocker.patch("os.path.getsize", return_value=(MAX_UPLOAD_MB - 1) * 1024 * 1024)
+        mocker.patch("os.path.getsize", return_value=(GROQ_UPLOAD_CAP_MB - 1) * 1024 * 1024)
         result = maybe_segment("/audio.opus")
         assert result == ["/audio.opus"]
 
@@ -93,14 +93,14 @@ class TestMaybeSegment:
                 f.write("fake audio data")
 
             mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
-            mocker.patch("os.path.getsize", return_value=(MAX_UPLOAD_MB + 10) * 1024 * 1024)
+            mocker.patch("os.path.getsize", return_value=(GROQ_UPLOAD_CAP_MB + 10) * 1024 * 1024)
             mocker.patch("subprocess.run")
             # Create segment files in the output directory
             segments_dir = os.path.join(tmpdir, "audio_segments")
             os.makedirs(segments_dir, exist_ok=True)
-            segment_1 = os.path.join(segments_dir, "audio_000.wav")
-            segment_2 = os.path.join(segments_dir, "audio_001.wav")
-            segment_3 = os.path.join(segments_dir, "audio_002.wav")
+            segment_1 = os.path.join(segments_dir, "audio_000.opus")
+            segment_2 = os.path.join(segments_dir, "audio_001.opus")
+            segment_3 = os.path.join(segments_dir, "audio_002.opus")
             Path(segment_1).touch()
             Path(segment_2).touch()
             Path(segment_3).touch()
@@ -115,7 +115,7 @@ class TestMaybeSegment:
     def test_maybe_segment_calls_ffmpeg_with_segment_time(self, mocker):
         """Test that ffmpeg is called with correct segmentation parameters."""
         mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
-        mocker.patch("os.path.getsize", return_value=(MAX_UPLOAD_MB + 10) * 1024 * 1024)
+        mocker.patch("os.path.getsize", return_value=(GROQ_UPLOAD_CAP_MB + 10) * 1024 * 1024)
         mock_run = mocker.patch("subprocess.run")
         mocker.patch("pathlib.Path.glob", return_value=[])
         mocker.patch("pathlib.Path.mkdir")
@@ -130,7 +130,7 @@ class TestMaybeSegment:
         assert "-f" in cmd
         assert "segment" in cmd
         assert "-segment_time" in cmd
-        assert str(SEGMENT_LENGTH_SECONDS) in cmd
+        assert str(SEGMENT_DURATION_SECONDS) in cmd
 
     def test_maybe_segment_raises_on_ffmpeg_error(self, mocker):
         """Test that a RuntimeError is raised if ffmpeg segmentation fails."""
@@ -140,7 +140,7 @@ class TestMaybeSegment:
                 f.write("fake audio")
 
             mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
-            mocker.patch("os.path.getsize", return_value=(MAX_UPLOAD_MB + 10) * 1024 * 1024)
+            mocker.patch("os.path.getsize", return_value=(GROQ_UPLOAD_CAP_MB + 10) * 1024 * 1024)
             mocker.patch(
                 "subprocess.run",
                 side_effect=subprocess.CalledProcessError(1, "ffmpeg", stderr="Error")
@@ -152,7 +152,7 @@ class TestMaybeSegment:
     def test_maybe_segment_creates_output_directory(self, mocker):
         """Test that output directory is created for segments."""
         mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
-        mocker.patch("os.path.getsize", return_value=(MAX_UPLOAD_MB + 10) * 1024 * 1024)
+        mocker.patch("os.path.getsize", return_value=(GROQ_UPLOAD_CAP_MB + 10) * 1024 * 1024)
         mocker.patch("subprocess.run")
         mocker.patch("pathlib.Path.glob", return_value=[])
         mock_mkdir = mocker.patch("pathlib.Path.mkdir")
@@ -162,6 +162,6 @@ class TestMaybeSegment:
     def test_maybe_segment_at_exact_cap(self, mocker):
         """Test that file at exactly the cap is not segmented."""
         mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
-        mocker.patch("os.path.getsize", return_value=MAX_UPLOAD_MB * 1024 * 1024)
+        mocker.patch("os.path.getsize", return_value=GROQ_UPLOAD_CAP_MB * 1024 * 1024)
         result = maybe_segment("/audio.opus")
         assert result == ["/audio.opus"]

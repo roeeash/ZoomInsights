@@ -69,7 +69,7 @@ class TestMapPhase:
         mock_client.chat.completions.create.side_effect = responses
 
         chunks = [f"Chunk {i+1}" for i in range(num_chunks)]
-        summaries = map_phase(chunks, mock_client)
+        summaries = map_phase(chunks, mock_client, model="llama-3.3-70b-versatile")
 
         assert len(summaries) == num_chunks
         assert mock_client.chat.completions.create.call_count == num_chunks
@@ -82,7 +82,7 @@ class TestMapPhase:
         mock_client.chat.completions.create.return_value = mock_response
 
         chunks = ["Test chunk"]
-        map_phase(chunks, mock_client)
+        map_phase(chunks, mock_client, model="llama-3.3-70b-versatile")
 
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         assert call_kwargs["model"] == "llama-3.3-70b-versatile"
@@ -95,7 +95,7 @@ class TestMapPhase:
         mock_client.chat.completions.create.return_value = mock_response
 
         chunks = ["This is a meeting chunk."]
-        summaries = map_phase(chunks, mock_client)
+        summaries = map_phase(chunks, mock_client, model="llama-3.3-70b-versatile")
 
         assert len(summaries) == 1
         assert "Summary of chunk 1" in summaries[0]
@@ -126,7 +126,7 @@ class TestReducePhase:
         mock_client.chat.completions.create.return_value = mock_response
 
         summaries = ["Summary 1", "Summary 2"]
-        insights = reduce_phase(summaries, mock_client)
+        insights = reduce_phase(summaries, mock_client, model="llama-3.3-70b-versatile")
 
         # Verify schema compliance
         validate(instance=insights, schema=INSIGHTS_SCHEMA)
@@ -146,7 +146,7 @@ class TestReducePhase:
         mock_client.chat.completions.create.return_value = json.dumps(valid_insights)
 
         summaries = ["Test"]
-        insights = reduce_phase(summaries, mock_client)
+        insights = reduce_phase(summaries, mock_client, model="llama-3.3-70b-versatile")
 
         assert insights["summary"] == "Test summary"
 
@@ -155,14 +155,13 @@ class TestReducePhase:
 class TestSummarize:
     """Tests for the full summarization pipeline."""
 
-    def test_summarize_valid_transcript(self):
+    def test_summarize_valid_transcript(self, mocker):
         """Test summarizing a valid transcript produces schema-valid output."""
-        from unittest.mock import MagicMock
-        mock_client = MagicMock()
+        mock_client = mocker.MagicMock()
 
         # Mock map phase responses (1 chunk in this case)
-        map_response = MagicMock()
-        map_response.choices = [MagicMock(message=MagicMock(content="Chunk 1 summary"))]
+        map_response = mocker.MagicMock()
+        map_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content="Chunk 1 summary"))]
 
         # Mock reduce phase response
         valid_insights = {
@@ -173,8 +172,8 @@ class TestSummarize:
             "open_questions": ["Question 1"],
             "notable_quotes": ["Quote 1"],
         }
-        reduce_response = MagicMock()
-        reduce_response.choices = [MagicMock(message=MagicMock(content=json.dumps(valid_insights)))]
+        reduce_response = mocker.MagicMock()
+        reduce_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content=json.dumps(valid_insights)))]
 
         mock_client.chat.completions.create.side_effect = [
             map_response,
@@ -182,27 +181,26 @@ class TestSummarize:
         ]
 
         transcript = " ".join(["word"] * 500)  # Single chunk
-        insights = summarize(transcript, mock_client)
+        insights = summarize(transcript, mock_client, model="llama-3.3-70b-versatile")
 
         validate(instance=insights, schema=INSIGHTS_SCHEMA)
         assert insights["summary"] == "Meeting summary"
 
-    def test_summarize_with_schema_validation_failure_uses_fallback(self):
+    def test_summarize_with_schema_validation_failure_uses_fallback(self, mocker):
         """Test that invalid LLM output falls back to safe object."""
-        from unittest.mock import MagicMock
-        mock_client = MagicMock()
+        mock_client = mocker.MagicMock()
 
         # Mock map phase
-        map_response = MagicMock()
-        map_response.choices = [MagicMock(message=MagicMock(content="Summary"))]
+        map_response = mocker.MagicMock()
+        map_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content="Summary"))]
 
         # Mock reduce phase with invalid JSON
-        reduce_response = MagicMock()
-        reduce_response.choices = [MagicMock(message=MagicMock(content='{"invalid": "object"}'))]
+        reduce_response = mocker.MagicMock()
+        reduce_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content='{"invalid": "object"}'))]
 
         # Mock repair attempt (also fails)
-        repair_response = MagicMock()
-        repair_response.choices = [MagicMock(message=MagicMock(content="Not JSON at all"))]
+        repair_response = mocker.MagicMock()
+        repair_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content="Not JSON at all"))]
 
         mock_client.chat.completions.create.side_effect = [
             map_response,
@@ -211,20 +209,19 @@ class TestSummarize:
         ]
 
         transcript = " ".join(["word"] * 500)
-        insights = summarize(transcript, mock_client)
+        insights = summarize(transcript, mock_client, model="llama-3.3-70b-versatile")
 
         # Should return fallback (valid but empty)
         validate(instance=insights, schema=INSIGHTS_SCHEMA)
         assert insights["summary"] == "Unable to extract structured insights from transcript."
         assert insights["key_points"] == []
 
-    def test_summarize_action_items_never_fabricate(self):
+    def test_summarize_action_items_never_fabricate(self, mocker):
         """Test that action items use null for missing owners/dates."""
-        from unittest.mock import MagicMock
-        mock_client = MagicMock()
+        mock_client = mocker.MagicMock()
 
-        map_response = MagicMock()
-        map_response.choices = [MagicMock(message=MagicMock(content="Summary"))]
+        map_response = mocker.MagicMock()
+        map_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content="Summary"))]
 
         valid_insights = {
             "summary": "Test",
@@ -237,8 +234,8 @@ class TestSummarize:
             "open_questions": [],
             "notable_quotes": [],
         }
-        reduce_response = MagicMock()
-        reduce_response.choices = [MagicMock(message=MagicMock(content=json.dumps(valid_insights)))]
+        reduce_response = mocker.MagicMock()
+        reduce_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content=json.dumps(valid_insights)))]
 
         mock_client.chat.completions.create.side_effect = [
             map_response,
@@ -246,19 +243,18 @@ class TestSummarize:
         ]
 
         transcript = " ".join(["word"] * 500)
-        insights = summarize(transcript, mock_client)
+        insights = summarize(transcript, mock_client, model="llama-3.3-70b-versatile")
 
         # Verify owners are null, not fabricated
         assert insights["action_items"][0]["owner"] is None
         assert insights["action_items"][1]["owner"] == "Bob"
 
-    def test_summarize_empty_arrays_allowed(self):
+    def test_summarize_empty_arrays_allowed(self, mocker):
         """Test that empty arrays in insights are valid."""
-        from unittest.mock import MagicMock
-        mock_client = MagicMock()
+        mock_client = mocker.MagicMock()
 
-        map_response = MagicMock()
-        map_response.choices = [MagicMock(message=MagicMock(content="Summary"))]
+        map_response = mocker.MagicMock()
+        map_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content="Summary"))]
 
         insights_empty_arrays = {
             "summary": "No action items",
@@ -268,8 +264,8 @@ class TestSummarize:
             "open_questions": [],
             "notable_quotes": [],
         }
-        reduce_response = MagicMock()
-        reduce_response.choices = [MagicMock(message=MagicMock(content=json.dumps(insights_empty_arrays)))]
+        reduce_response = mocker.MagicMock()
+        reduce_response.choices = [mocker.MagicMock(message=mocker.MagicMock(content=json.dumps(insights_empty_arrays)))]
 
         mock_client.chat.completions.create.side_effect = [
             map_response,
@@ -277,7 +273,7 @@ class TestSummarize:
         ]
 
         transcript = " ".join(["word"] * 500)
-        insights = summarize(transcript, mock_client)
+        insights = summarize(transcript, mock_client, model="llama-3.3-70b-versatile")
 
         validate(instance=insights, schema=INSIGHTS_SCHEMA)
         assert all(isinstance(arr, list) and len(arr) == 0 for arr in [

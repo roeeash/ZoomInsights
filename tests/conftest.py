@@ -5,7 +5,6 @@ import os
 import struct
 import wave
 import json
-from unittest.mock import patch
 
 import pytest
 from dotenv import load_dotenv
@@ -17,34 +16,6 @@ load_dotenv()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from zoom_insights.config import Config
-
-
-class MockerWrapper:
-    """Minimal mocker wrapper using unittest.mock for pytest-mock compatibility."""
-
-    def MagicMock(self, *args, **kwargs):
-        """Create a MagicMock."""
-        from unittest.mock import MagicMock
-        return MagicMock(*args, **kwargs)
-
-    def patch(self, target, *args, **kwargs):
-        """Patch a target and return the mock."""
-        patcher = patch(target, *args, **kwargs)
-        return patcher.start()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        patch.stopall()
-
-
-@pytest.fixture
-def mocker():
-    """Provide a mocker fixture that wraps unittest.mock."""
-    m = MockerWrapper()
-    yield m
-    patch.stopall()
 
 
 @pytest.fixture(scope="session")

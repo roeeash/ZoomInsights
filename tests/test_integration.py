@@ -302,6 +302,10 @@ class TestIntegration:
                 zoom_client_id="test",
                 zoom_client_secret="test",
                 groq_api_key="test-key",
+                jira_url="https://test.atlassian.net",
+                jira_email="test@test.com",
+                jira_api_token="test-token",
+                jira_project_key="TEST",
             )
 
             mocker.patch("zoom_insights.cli.ensure_work_dir", return_value=tmpdir)
@@ -310,10 +314,6 @@ class TestIntegration:
             mocker.patch("zoom_insights.cli.shutil.copy2")
             mocker.patch("zoom_insights.cli.to_compressed_audio")
             mocker.patch("zoom_insights.cli.maybe_segment", return_value=[compressed_file])
-            # Mock Jira credential validation to succeed
-            mock_get = mocker.MagicMock()
-            mock_get.status_code = 200
-            mocker.patch("zoom_insights.cli.requests.get", return_value=mock_get)
             mocker.patch("zoom_insights.cli.write_report")
             mock_export = mocker.patch("zoom_insights.cli._export_to_jira")
 
@@ -341,16 +341,19 @@ class TestIntegration:
 
             mock_groq_client = good_groq_client(mocker, sample_insights)
 
+            config = Config(
+                zoom_account_id="test",
+                zoom_client_id="test",
+                zoom_client_secret="test",
+                groq_api_key="test-key",
+            )
+
             mocker.patch("zoom_insights.cli.ensure_work_dir", return_value=tmpdir)
             mocker.patch("zoom_insights.cli.is_completed", return_value=False)
             mocker.patch("zoom_insights.cli.mark_completed")
             mocker.patch("zoom_insights.cli.shutil.copy2")
             mocker.patch("zoom_insights.cli.to_compressed_audio")
             mocker.patch("zoom_insights.cli.maybe_segment", return_value=[compressed_file])
-            # Mock Jira credential validation to succeed
-            mock_get = mocker.MagicMock()
-            mock_get.status_code = 200
-            mocker.patch("zoom_insights.cli.requests.get", return_value=mock_get)
             mocker.patch("zoom_insights.cli.write_report")
             mock_export = mocker.patch("zoom_insights.cli._export_to_jira")
 
@@ -359,6 +362,7 @@ class TestIntegration:
                 mock_groq_client,
                 work_dir=tmpdir,
                 jira=False,  # explicit False
+                config=config,
             )
 
             # Verify _export_to_jira was NOT called
@@ -394,6 +398,10 @@ class TestIntegration:
                 zoom_client_id="test",
                 zoom_client_secret="test",
                 groq_api_key="test-key",
+                jira_url="https://test.atlassian.net",
+                jira_email="test@test.com",
+                jira_api_token="test-token",
+                jira_project_key="TEST",
             )
 
             mocker.patch("zoom_insights.cli.ensure_work_dir", return_value=tmpdir)
@@ -403,10 +411,6 @@ class TestIntegration:
             mocker.patch("zoom_insights.cli.download")
             mocker.patch("zoom_insights.cli.to_compressed_audio")
             mocker.patch("zoom_insights.cli.maybe_segment", return_value=[compressed_file])
-            # Mock Jira credential validation to succeed
-            mock_get = mocker.MagicMock()
-            mock_get.status_code = 200
-            mocker.patch("zoom_insights.cli.requests.get", return_value=mock_get)
             mocker.patch("zoom_insights.cli.write_report")
             mock_export = mocker.patch("zoom_insights.cli._export_to_jira")
 
@@ -523,11 +527,19 @@ class TestRecordingToJson:
             mocker.patch("zoom_insights.cli.is_completed", return_value=False)
             mocker.patch("zoom_insights.cli.mark_completed")
 
+            config = Config(
+                zoom_account_id="test",
+                zoom_client_id="test",
+                zoom_client_secret="test",
+                groq_api_key="test-key",
+            )
+
             if should_succeed:
                 _process_local_file(
                     audio_file,
                     mock_groq_client,
                     work_dir=work_dir,
+                    config=config,
                 )
             else:
                 with pytest.raises(Exception):
@@ -535,6 +547,7 @@ class TestRecordingToJson:
                         audio_file,
                         mock_groq_client,
                         work_dir=work_dir,
+                        config=config,
                     )
 
 

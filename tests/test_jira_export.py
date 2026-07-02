@@ -24,12 +24,15 @@ class TestBuildTicketPayload:
         # Task should be in summary
         assert payload["fields"]["summary"] == "Review budget proposal"
 
-        # Task should NOT appear in description text content
+        # Task should appear in description text content
         description = payload["fields"]["description"]
         assert description["type"] == "doc"
         assert description["version"] == 1
-        description_text = description["content"][0]["content"][0]["text"]
-        # Task appears as "Task: Review budget proposal" in context, but summary should not contain key info
+        # Extract all text from all paragraphs
+        description_text = " ".join([
+            para["content"][0]["text"] for para in description["content"]
+        ])
+        # Task appears as "Task: Review budget proposal" in context
         assert "Task:" in description_text
         assert "Review budget proposal" in description_text
 
@@ -46,7 +49,10 @@ class TestBuildTicketPayload:
 
         # Key points should be in description
         description = payload["fields"]["description"]
-        description_text = description["content"][0]["content"][0]["text"]
+        # Extract all text from all paragraphs
+        description_text = " ".join([
+            para["content"][0]["text"] for para in description["content"]
+        ])
         assert "Q4 strategy finalized" in description_text
         assert "Budget allocated" in description_text
 
@@ -67,7 +73,11 @@ class TestBuildTicketPayload:
         payload = build_ticket_payload(action_item, key_points, "PROJ")
 
         # Description should contain "Unassigned"
-        description_text = payload["fields"]["description"]["content"][0]["content"][0]["text"]
+        description = payload["fields"]["description"]
+        # Extract all text from all paragraphs
+        description_text = " ".join([
+            para["content"][0]["text"] for para in description["content"]
+        ])
         assert "Owner: Unassigned" in description_text
 
         # Summary should only be the task
@@ -104,15 +114,17 @@ class TestBuildTicketPayload:
         # Check ADF structure
         assert description["type"] == "doc"
         assert description["version"] == 1
-        assert len(description["content"]) == 1
+        # Should have: Context, 2 key points, Task, Owner = 5 paragraphs
+        assert len(description["content"]) == 5
 
+        # Check first paragraph (Context)
         paragraph = description["content"][0]
         assert paragraph["type"] == "paragraph"
         assert len(paragraph["content"]) == 1
 
         text = paragraph["content"][0]
         assert text["type"] == "text"
-        assert isinstance(text["text"], str)
+        assert text["text"] == "Context:"
 
     def test_build_ticket_payload_project_and_issuetype(self):
         """Test that project key and issue type are set correctly."""
@@ -139,7 +151,11 @@ class TestBuildTicketPayload:
 
         payload = build_ticket_payload(action_item, key_points, "PROJ")
 
-        description_text = payload["fields"]["description"]["content"][0]["content"][0]["text"]
+        description = payload["fields"]["description"]
+        # Extract all text from all paragraphs
+        description_text = " ".join([
+            para["content"][0]["text"] for para in description["content"]
+        ])
 
         # Check all components are present
         assert "Context:" in description_text
@@ -153,9 +169,8 @@ class TestBuildTicketPayload:
 class TestCreateJiraTickets:
     """Tests for create_jira_tickets() function."""
 
-    def test_create_jira_tickets_calls_correct_endpoint(self):
+    def test_create_jira_tickets_calls_correct_endpoint(self, mocker):
         """Test that POST is made to correct Jira endpoint with Basic Auth."""
-        from unittest.mock import MagicMock, patch
         insights = {
             "action_items": [
                 {
@@ -167,34 +182,33 @@ class TestCreateJiraTickets:
             "key_points": ["Point 1"]
         }
 
-        mock_response = MagicMock()
+        mock_response = mocker.MagicMock()
         mock_response.status_code = 201
         mock_response.json.return_value = {"key": "PROJ-1"}
 
-        with patch("zoom_insights.jira_export.requests.post", return_value=mock_response) as mock_post:
-            created_keys = create_jira_tickets(
-                insights,
-                "https://company.atlassian.net",
-                "user@company.com",
-                "test_token_123",
-                "PROJ"
-            )
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post", return_value=mock_response)
+        created_keys = create_jira_tickets(
+            insights,
+            "https://company.atlassian.net",
+            "user@company.com",
+            "test_token_123",
+            "PROJ"
+        )
 
-            # Check endpoint
-            call_args = mock_post.call_args
-            assert call_args[0][0] == "https://company.atlassian.net/rest/api/3/issue"
+        # Check endpoint
+        call_args = mock_post.call_args
+        assert call_args[0][0] == "https://company.atlassian.net/rest/api/3/issue"
 
-            # Check Basic Auth header
-            headers = call_args[1]["headers"]
-            auth_str = "user@company.com:test_token_123"
-            expected_auth = base64.b64encode(auth_str.encode()).decode()
-            assert headers["Authorization"] == f"Basic {expected_auth}"
+        # Check Basic Auth header
+        headers = call_args[1]["headers"]
+        auth_str = "user@company.com:test_token_123"
+        expected_auth = base64.b64encode(auth_str.encode()).decode()
+        assert headers["Authorization"] == f"Basic {expected_auth}"
 
-            assert created_keys == ["PROJ-1"]
+        assert created_keys == ["PROJ-1"]
 
-    def test_create_jira_tickets_returns_keys(self):
+    def test_create_jira_tickets_returns_keys(self, mocker):
         """Test that function returns list of created ticket keys."""
-        from unittest.mock import MagicMock, patch
         insights = {
             "action_items": [
                 {"task": "Task 1", "owner": "Alice", "due": None},
@@ -204,7 +218,7 @@ class TestCreateJiraTickets:
             "key_points": ["Point A", "Point B"]
         }
 
-        mock_response = MagicMock()
+        mock_response = mocker.MagicMock()
         mock_response.status_code = 201
 
         def side_effect(*args, **kwargs):
@@ -219,23 +233,22 @@ class TestCreateJiraTickets:
                 mock_response.json.return_value = {"key": "PROJ-102"}
             return mock_response
 
-        with patch("zoom_insights.jira_export.requests.post", side_effect=side_effect):
-            created_keys = create_jira_tickets(
-                insights,
-                "https://test.atlassian.net",
-                "test@test.com",
-                "token",
-                "PROJ"
-            )
+        mocker.patch("zoom_insights.jira_export.requests.post", side_effect=side_effect)
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
 
-            assert len(created_keys) == 3
-            assert "PROJ-100" in created_keys
-            assert "PROJ-101" in created_keys
-            assert "PROJ-102" in created_keys
+        assert len(created_keys) == 3
+        assert "PROJ-100" in created_keys
+        assert "PROJ-101" in created_keys
+        assert "PROJ-102" in created_keys
 
-    def test_create_jira_tickets_skips_empty_task(self):
+    def test_create_jira_tickets_skips_empty_task(self, mocker):
         """Test that action items with empty task are skipped."""
-        from unittest.mock import MagicMock, patch
         insights = {
             "action_items": [
                 {"task": "Valid task", "owner": "Alice", "due": None},
@@ -246,27 +259,26 @@ class TestCreateJiraTickets:
             "key_points": ["Point"]
         }
 
-        mock_response = MagicMock()
+        mock_response = mocker.MagicMock()
         mock_response.status_code = 201
         mock_response.json.return_value = {"key": "PROJ-1"}
 
-        with patch("zoom_insights.jira_export.requests.post", return_value=mock_response) as mock_post:
-            created_keys = create_jira_tickets(
-                insights,
-                "https://test.atlassian.net",
-                "test@test.com",
-                "token",
-                "PROJ"
-            )
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post", return_value=mock_response)
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
 
-            # Only 2 tickets should be created (valid task and another valid)
-            assert len(created_keys) == 2
-            # Only 2 POST calls should be made
-            assert mock_post.call_count == 2
+        # Only 2 tickets should be created (valid task and another valid)
+        assert len(created_keys) == 2
+        # Only 2 POST calls should be made
+        assert mock_post.call_count == 2
 
-    def test_create_jira_tickets_continues_on_error(self):
+    def test_create_jira_tickets_continues_on_error(self, mocker):
         """Test that function continues to next item if one returns error."""
-        from unittest.mock import MagicMock, patch
         insights = {
             "action_items": [
                 {"task": "Task 1", "owner": "Alice", "due": None},
@@ -286,26 +298,26 @@ class TestCreateJiraTickets:
 
         def side_effect(*args, **kwargs):
             status, body = next(response_iter)
-            mock_response = MagicMock()
+            mock_response = mocker.MagicMock()
             mock_response.status_code = status
             if body:
                 mock_response.json.return_value = body
             mock_response.text = "Bad request"
             return mock_response
 
-        with patch("zoom_insights.jira_export.requests.post", side_effect=side_effect):
-            created_keys = create_jira_tickets(
-                insights,
-                "https://test.atlassian.net",
-                "test@test.com",
-                "token",
-                "PROJ"
-            )
+        mocker.patch("zoom_insights.jira_export.requests.post", side_effect=side_effect)
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
 
-            # Should have created 2 tickets despite error in middle
-            assert len(created_keys) == 2
-            assert "PROJ-1" in created_keys
-            assert "PROJ-3" in created_keys
+        # Should have created 2 tickets despite error in middle
+        assert len(created_keys) == 2
+        assert "PROJ-1" in created_keys
+        assert "PROJ-3" in created_keys
 
     def test_create_jira_tickets_missing_action_items_key(self):
         """Test that missing action_items raises ValueError."""
@@ -343,30 +355,28 @@ class TestCreateJiraTickets:
             )
         assert "key_points" in str(exc_info.value)
 
-    def test_create_jira_tickets_empty_action_items_list(self):
+    def test_create_jira_tickets_empty_action_items_list(self, mocker):
         """Test that empty action_items list returns empty list of created keys."""
-        from unittest.mock import patch
         insights = {
             "action_items": [],
             "key_points": ["Point"]
         }
 
-        with patch("zoom_insights.jira_export.requests.post") as mock_post:
-            created_keys = create_jira_tickets(
-                insights,
-                "https://test.atlassian.net",
-                "test@test.com",
-                "token",
-                "PROJ"
-            )
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post")
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
 
-            # No POST calls should be made
-            assert mock_post.call_count == 0
-            assert created_keys == []
+        # No POST calls should be made
+        assert mock_post.call_count == 0
+        assert created_keys == []
 
-    def test_create_jira_tickets_passes_payload_correctly(self):
+    def test_create_jira_tickets_passes_payload_correctly(self, mocker):
         """Test that payload is correctly passed to requests.post."""
-        from unittest.mock import MagicMock, patch
         insights = {
             "action_items": [
                 {"task": "Review docs", "owner": "Alice", "due": "2024-12-20"}
@@ -374,30 +384,30 @@ class TestCreateJiraTickets:
             "key_points": ["Docs complete"]
         }
 
-        mock_response = MagicMock()
+        mock_response = mocker.MagicMock()
         mock_response.status_code = 201
         mock_response.json.return_value = {"key": "PROJ-42"}
 
-        with patch("zoom_insights.jira_export.requests.post", return_value=mock_response) as mock_post:
-            created_keys = create_jira_tickets(
-                insights,
-                "https://test.atlassian.net",
-                "test@test.com",
-                "token",
-                "PROJ"
-            )
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post", return_value=mock_response)
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
 
-            # Verify payload structure
-            call_kwargs = mock_post.call_args[1]
-            payload = call_kwargs["json"]
+        # Verify payload structure
+        call_kwargs = mock_post.call_args[1]
+        payload = call_kwargs["json"]
 
-            assert payload["fields"]["summary"] == "Review docs"
-            assert payload["fields"]["project"]["key"] == "PROJ"
-            assert payload["fields"]["issuetype"]["name"] == "Task"
+        assert payload["fields"]["summary"] == "Review docs"
+        assert payload["fields"]["project"]["key"] == "PROJ"
+        assert payload["fields"]["issuetype"]["name"] == "Task"
 
-            # Description should be ADF format
-            description = payload["fields"]["description"]
-            assert description["type"] == "doc"
-            assert description["version"] == 1
+        # Description should be ADF format
+        description = payload["fields"]["description"]
+        assert description["type"] == "doc"
+        assert description["version"] == 1
 
-            assert created_keys == ["PROJ-42"]
+        assert created_keys == ["PROJ-42"]

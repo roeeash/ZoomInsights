@@ -144,9 +144,9 @@ class TestIsCompleted:
 
             # Second run
             assert is_completed("uuid-123", log_path) is True
-            # Should not double-write
+            # Deduplicates on second write
             mark_completed("uuid-123", log_path)
 
             with open(log_path) as f:
                 lines = f.readlines()
-            assert len(lines) == 2  # Written twice (no dedup)
+            assert len(lines) == 1
