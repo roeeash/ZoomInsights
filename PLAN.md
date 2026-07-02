@@ -158,8 +158,9 @@ Rules: every key present; arrays may be empty; never invent owners/dates — use
 - [x] Cycle 13: Auto-export with `--jira` flag — ✓ Combine recording processing + Jira export into one command
 - [x] Cycle 14: Pytest fixtures infrastructure — ✓ 9 fixtures, pytest-mock plugin, markers, 2 integration test classes, parametrized tests
 - [x] Cycle 15: E2E test: local recording → insights.json → Jira ticket — ✓ 5 test cases with 6 parametrized variants, credential auto-skip, full pipeline coverage
+- [x] Cycle 16: Full optimization pass — ✓ Fixed 11 correctness bugs, eliminated unittest.mock, refactored cli.py, 158+ tests passing
 
-**STATUS: MVP COMPLETE ✓ | Cycle 12 COMPLETE ✓ | Cycle 13 COMPLETE ✓**
+**STATUS: MVP COMPLETE ✓ | OPTIMIZATION PASS COMPLETE ✓ | Cycle 16 COMPLETE ✓**
 
 ---
 
