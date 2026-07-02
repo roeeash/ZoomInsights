@@ -31,7 +31,7 @@ packages = ["zoom_insights"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra -q"
+addopts = "-ra -q --strict-markers"
 markers = [
     "unit: fast, fully-mocked unit tests",
     "integration: mocked integration tests spanning multiple modules",
