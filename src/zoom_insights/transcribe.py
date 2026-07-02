@@ -3,6 +3,7 @@
 import logging
 import requests
 from pathlib import Path
+from typing import Any, Optional
 from zoom_insights.retry import with_retry
 
 logger = logging.getLogger(__name__)
@@ -10,11 +11,12 @@ logger = logging.getLogger(__name__)
 
 def transcribe(
     paths: list[str],
-    client,
+    client: Any,
     use_vtt: bool = False,
     meeting_uuid: str = "",
-    files: list = None,
+    files: Optional[list] = None,
     token: str = "",
+    model: str = "whisper-large-v3-turbo",
 ) -> str:
     """Transcribe one or more audio segments using Groq Whisper and concatenate.
 
@@ -25,6 +27,7 @@ def transcribe(
         meeting_uuid: UUID of the meeting (needed for VTT download).
         files: List of RecordingFile objects (needed for VTT download).
         token: Zoom OAuth access token (needed for VTT download).
+        model: Whisper model name to use.
 
     Returns:
         Full transcript as a string.
@@ -42,15 +45,13 @@ def transcribe(
     for path in paths:
         logger.info(f"Transcribing {path}")
 
-        def transcribe_segment():
-            with open(path, "rb") as audio_file:
-                return client.audio.transcriptions.create(
-                    file=(Path(path).name, audio_file),
-                    model="whisper-large-v3-turbo",
-                    response_format="text",
-                )
-
-        response = with_retry(transcribe_segment)
+        with open(path, "rb") as audio_file:
+            response = with_retry(
+                client.audio.transcriptions.create,
+                file=(Path(path).name, audio_file),
+                model=model,
+                response_format="text",
+            )
 
         # Handle both string and object responses
         if isinstance(response, str):
@@ -62,7 +63,7 @@ def transcribe(
         transcript_parts.append(text)
         logger.debug(f"Segment transcribed: {len(text)} characters")
 
-    full_transcript = " ".join(transcript_parts)
+    full_transcript = "\n".join(transcript_parts)
     logger.info(f"Full transcript: {len(full_transcript)} characters")
 
     return full_transcript

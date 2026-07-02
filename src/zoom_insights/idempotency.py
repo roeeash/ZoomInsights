@@ -2,10 +2,12 @@
 
 import logging
 import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-COMPLETED_LOG_PATH = "work/completed.log"
+# Resolve path relative to project root
+COMPLETED_LOG_PATH = str(Path(__file__).parent.parent.parent / "work" / "completed.log")
 
 
 def load_completed_uuids(log_path: str = COMPLETED_LOG_PATH) -> set[str]:
@@ -34,15 +36,21 @@ def load_completed_uuids(log_path: str = COMPLETED_LOG_PATH) -> set[str]:
 
 
 def mark_completed(meeting_uuid: str, log_path: str = COMPLETED_LOG_PATH) -> None:
-    """Mark a meeting UUID as completed.
+    """Mark a meeting UUID as completed (deduplicates if already present).
 
     Args:
         meeting_uuid: UUID of the processed meeting.
         log_path: Path to completed.log file.
     """
-    os.makedirs(os.path.dirname(log_path) or "work", exist_ok=True)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     try:
+        # Check if UUID already in log; deduplicate
+        completed = load_completed_uuids(log_path)
+        if meeting_uuid in completed:
+            logger.debug(f"{meeting_uuid} already marked as completed")
+            return
+
         with open(log_path, "a") as f:
             f.write(f"{meeting_uuid}\n")
         logger.debug(f"Marked {meeting_uuid} as completed")

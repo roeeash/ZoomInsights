@@ -5,11 +5,16 @@ import logging
 import os
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import requests
 from zoom_insights.config import Config
+from zoom_insights.retry import with_retry
 
 logger = logging.getLogger(__name__)
+
+ZOOM_PAGE_SIZE = 30
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
 @dataclass
@@ -73,16 +78,21 @@ def list_recent_recordings(token: str, days_back: int = 60) -> list[Meeting]:
     logger.info(f"Fetching recordings from last {days_back} days")
 
     headers = {"Authorization": f"Bearer {token}"}
-    params = {
-        "from": _format_date_ago(days_back),
-        "to": _format_date_now(),
-        "page_size": 30,
-    }
-
     all_meetings = []
 
+    next_page_token = None
+
     while True:
-        response = requests.get(
+        params = {
+            "from": _format_date_ago(days_back),
+            "to": _format_date_now(),
+            "page_size": ZOOM_PAGE_SIZE,
+        }
+        if next_page_token:
+            params["next_page_token"] = next_page_token
+
+        response = with_retry(
+            requests.get,
             "https://zoom.us/v2/users/me/recordings",
             headers=headers,
             params=params,
@@ -100,13 +110,9 @@ def list_recent_recordings(token: str, days_back: int = 60) -> list[Meeting]:
             meeting = _parse_meeting(meeting_data)
             all_meetings.append(meeting)
 
-        next_token = data.get("next_page_token")
-        if not next_token:
+        next_page_token = data.get("next_page_token")
+        if not next_page_token:
             break
-
-        params["next_page_token"] = next_token
-        del params["from"]
-        del params["to"]
 
     logger.info(f"Retrieved {len(all_meetings)} meetings")
     return all_meetings
@@ -119,7 +125,8 @@ def get_meeting_recording(token: str, meeting_uuid: str) -> Meeting:
     encoded_uuid = _encode_uuid(meeting_uuid)
     headers = {"Authorization": f"Bearer {token}"}
 
-    response = requests.get(
+    response = with_retry(
+        requests.get,
         f"https://zoom.us/v2/users/me/recordings/{encoded_uuid}",
         headers=headers,
     )
@@ -149,15 +156,13 @@ def pick_file(files: list[RecordingFile], *types: str) -> Optional[RecordingFile
 
 def _format_date_ago(days: int) -> str:
     """Format a date string for N days ago in ISO 8601."""
-    from datetime import datetime, timedelta
-    dt = datetime.utcnow() - timedelta(days=days)
+    dt = datetime.now(timezone.utc) - timedelta(days=days)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _format_date_now() -> str:
     """Format today's date in ISO 8601."""
-    from datetime import datetime
-    dt = datetime.utcnow()
+    dt = datetime.now(timezone.utc)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -234,12 +239,11 @@ def download(file: RecordingFile, token: str, out_path: str) -> None:
         )
 
     # Write file in 1 MB chunks
-    chunk_size = 1024 * 1024  # 1 MB
     bytes_written = 0
 
     try:
         with open(out_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=chunk_size):
+            for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
                 if chunk:
                     f.write(chunk)
                     bytes_written += len(chunk)

@@ -28,10 +28,19 @@ class Config:
         if missing:
             raise ValueError(f"Missing required configuration variables: {', '.join(missing)}")
 
+    def validate_zoom(self) -> None:
+        """Validate that Zoom credentials are set."""
+        zoom_fields = ["zoom_account_id", "zoom_client_id", "zoom_client_secret"]
+        missing = [field for field in zoom_fields if not getattr(self, field)]
+        if missing:
+            raise ValueError(f"Missing Zoom configuration variables: {', '.join(missing)}")
+
 
 def load_config() -> Config:
     """Load configuration from .env file and environment variables."""
     load_dotenv()
+
+    jira_url = os.getenv("JIRA_URL", "").rstrip("/")
 
     config = Config(
         zoom_account_id=os.getenv("ZOOM_ACCOUNT_ID", ""),
@@ -40,7 +49,7 @@ def load_config() -> Config:
         groq_api_key=os.getenv("GROQ_API_KEY", ""),
         llm_model=os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
         whisper_model=os.getenv("WHISPER_MODEL", "whisper-large-v3-turbo"),
-        jira_url=os.getenv("JIRA_URL", ""),
+        jira_url=jira_url,
         jira_email=os.getenv("JIRA_EMAIL", ""),
         jira_api_token=os.getenv("JIRA_API_TOKEN", ""),
         jira_project_key=os.getenv("JIRA_PROJECT_KEY", ""),

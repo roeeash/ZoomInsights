@@ -1,9 +1,13 @@
 """Retry logic with exponential backoff for transient failures."""
 
+import logging
 import time
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
-def with_retry(fn, *args, tries=6, base_delay=4, **kwargs):
+def with_retry(fn, *args, tries: int = 6, base_delay: int = 4, **kwargs) -> Any:
     """Retry a function call on transient errors with exponential backoff.
 
     Retries only on 429 (rate limit), 'rate' errors, or 'timeout' errors.
@@ -38,5 +42,6 @@ def with_retry(fn, *args, tries=6, base_delay=4, **kwargs):
                 raise
 
             # Wait before retry
+            logger.warning(f"Retrying attempt {i+1}/{tries} after {delay}s: {e}")
             time.sleep(delay)
             delay = min(delay * 2, 60)

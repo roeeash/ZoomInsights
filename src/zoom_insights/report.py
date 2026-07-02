@@ -44,20 +44,20 @@ def write_report(topic: str, transcript: str, insights: dict, out_dir: str) -> N
 
     # Write transcript.txt
     transcript_path = os.path.join(topic_dir, "transcript.txt")
-    with open(transcript_path, "w") as f:
+    with open(transcript_path, "w", encoding="utf-8") as f:
         f.write(transcript)
     logger.debug(f"Wrote transcript to {transcript_path}")
 
     # Write insights.json
     insights_path = os.path.join(topic_dir, "insights.json")
-    with open(insights_path, "w") as f:
+    with open(insights_path, "w", encoding="utf-8") as f:
         json.dump(insights, f, indent=2)
     logger.debug(f"Wrote insights to {insights_path}")
 
     # Write report.md
     report_path = os.path.join(topic_dir, "report.md")
     report_content = _render_report(topic, insights)
-    with open(report_path, "w") as f:
+    with open(report_path, "w", encoding="utf-8") as f:
         f.write(report_content)
     logger.debug(f"Wrote report to {report_path}")
 
@@ -77,17 +77,19 @@ def _render_report(topic: str, insights: dict) -> str:
     lines = []
 
     # Title
-    lines.append(f"# {topic}\n")
+    lines.append(f"# {topic}")
+    lines.append("")
 
     # Summary
     if insights.get("summary"):
-        lines.append("## Summary\n")
-        lines.append(f"{insights['summary']}\n")
+        lines.append("## Summary")
+        lines.append(insights['summary'])
+        lines.append("")
 
     # Key Points
     key_points = insights.get("key_points", [])
     if key_points:
-        lines.append("## Key Points\n")
+        lines.append("## Key Points")
         for point in key_points:
             lines.append(f"- {point}")
         lines.append("")
@@ -95,7 +97,7 @@ def _render_report(topic: str, insights: dict) -> str:
     # Decisions
     decisions = insights.get("decisions", [])
     if decisions:
-        lines.append("## Decisions\n")
+        lines.append("## Decisions")
         for decision in decisions:
             lines.append(f"- {decision}")
         lines.append("")
@@ -103,7 +105,7 @@ def _render_report(topic: str, insights: dict) -> str:
     # Action Items
     action_items = insights.get("action_items", [])
     if action_items:
-        lines.append("## Action Items\n")
+        lines.append("## Action Items")
         for item in action_items:
             owner = item.get("owner") or "Unassigned"
             task = item.get("task", "")
@@ -117,7 +119,7 @@ def _render_report(topic: str, insights: dict) -> str:
     # Open Questions
     questions = insights.get("open_questions", [])
     if questions:
-        lines.append("## Open Questions\n")
+        lines.append("## Open Questions")
         for question in questions:
             lines.append(f"- {question}")
         lines.append("")
@@ -125,9 +127,9 @@ def _render_report(topic: str, insights: dict) -> str:
     # Notable Quotes
     quotes = insights.get("notable_quotes", [])
     if quotes:
-        lines.append("## Notable Quotes\n")
+        lines.append("## Notable Quotes")
         for quote in quotes:
-            lines.append(f'> {quote}')
-            lines.append("")
+            lines.append(f"> {quote}")
+        lines.append("")
 
     return "\n".join(lines)

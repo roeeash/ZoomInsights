@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from jsonschema import validate, ValidationError
 from zoom_insights.retry import with_retry
 
@@ -62,7 +63,7 @@ def chunk(text: str, size: int = 11000) -> list[str]:
     return chunks
 
 
-def map_phase(chunks: list[str], client) -> list[str]:
+def map_phase(chunks: list[str], client, model: str) -> list[str]:
     """Summarize each chunk via LLM into tight bullets (map phase)."""
     summaries = []
 
@@ -89,14 +90,12 @@ Be faithful to the original text but interpret and structure information meaning
         ]
 
         try:
-            def create_message():
-                return client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    max_tokens=1024,
-                    messages=messages,
-                )
-
-            response = with_retry(create_message)
+            response = with_retry(
+                client.chat.completions.create,
+                model=model,
+                max_tokens=1024,
+                messages=messages,
+            )
 
             # Handle Groq response (has .choices[0].message.content)
             if isinstance(response, str):
@@ -114,7 +113,7 @@ Be faithful to the original text but interpret and structure information meaning
     return summaries
 
 
-def reduce_phase(summaries: list[str], client) -> dict:
+def reduce_phase(summaries: list[str], client, model: str) -> dict:
     """Combine summaries into the final insights JSON object (reduce phase)."""
     combined_text = "\n\n".join(summaries)
 
@@ -146,14 +145,12 @@ Do not invent information that wasn't discussed. Use null for missing data. Ever
     ]
 
     try:
-        def create_reduce_message():
-            return client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                max_tokens=2048,
-                messages=messages,
-            )
-
-        response = with_retry(create_reduce_message)
+        response = with_retry(
+            client.chat.completions.create,
+            model=model,
+            max_tokens=2048,
+            messages=messages,
+        )
 
         # Handle Groq response (has .choices[0].message.content)
         if isinstance(response, str):
@@ -166,7 +163,6 @@ Do not invent information that wasn't discussed. Use null for missing data. Ever
             insights = json.loads(result_text)
         except json.JSONDecodeError:
             # Try to extract JSON from response text
-            import re
             json_match = re.search(r"\{.*\}", result_text, re.DOTALL)
             if json_match:
                 insights = json.loads(json_match.group())
@@ -180,12 +176,13 @@ Do not invent information that wasn't discussed. Use null for missing data. Ever
         raise
 
 
-def summarize(transcript: str, client) -> dict:
+def summarize(transcript: str, client, model: str) -> dict:
     """Execute the full map-reduce pipeline and return schema-valid insights.
 
     Args:
         transcript: Full meeting transcript text.
         client: Groq API client.
+        model: LLM model name to use.
 
     Returns:
         Dictionary matching INSIGHTS_SCHEMA.
@@ -197,10 +194,10 @@ def summarize(transcript: str, client) -> dict:
     logger.info(f"Transcript split into {len(chunks_list)} chunks")
 
     # Map phase: summarize each chunk
-    summaries = map_phase(chunks_list, client)
+    summaries = map_phase(chunks_list, client, model)
 
     # Reduce phase: combine into final insights
-    insights = reduce_phase(summaries, client)
+    insights = reduce_phase(summaries, client, model)
 
     # Validate against schema
     try:
@@ -223,21 +220,18 @@ def summarize(transcript: str, client) -> dict:
         ]
 
         try:
-            def repair_message():
-                return client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    max_tokens=2048,
-                    messages=messages,
-                )
-
-            response = with_retry(repair_message)
+            response = with_retry(
+                client.chat.completions.create,
+                model=model,
+                max_tokens=2048,
+                messages=messages,
+            )
 
             if isinstance(response, str):
                 result_text = response
             else:
                 result_text = response.choices[0].message.content
 
-            import re
             json_match = re.search(r"\{.*\}", result_text, re.DOTALL)
             if json_match:
                 repaired = json.loads(json_match.group())

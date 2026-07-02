@@ -8,6 +8,21 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+def _build_auth_header(email: str, api_token: str) -> str:
+    """Build a Basic auth header for Jira API.
+
+    Args:
+        email: Jira user email.
+        api_token: Jira API token.
+
+    Returns:
+        Authorization header value (e.g., "Basic base64(...)").
+    """
+    auth_str = f"{email}:{api_token}"
+    encoded_auth = base64.b64encode(auth_str.encode()).decode()
+    return f"Basic {encoded_auth}"
+
+
 def build_ticket_payload(action_item: dict, key_points: list[str], project_key: str) -> dict:
     """Build a Jira ticket payload from an action item.
 
@@ -22,34 +37,35 @@ def build_ticket_payload(action_item: dict, key_points: list[str], project_key: 
     Raises:
         ValueError: if task is empty or None
     """
-    # Validate task is non-empty
     task = action_item.get("task", "").strip() if action_item.get("task") else ""
+
+    # Validate task is not empty
     if not task:
-        raise ValueError("Action item task cannot be empty")
+        raise ValueError("task field cannot be empty or None")
 
-    # Build formatted description with context
     owner = action_item.get("owner") or "Unassigned"
-    formatted_text = "Context:\n"
-    for kp in key_points:
-        formatted_text += f"- {kp}\n"
-    formatted_text += f"Task: {task}\n"
-    formatted_text += f"Owner: {owner}"
 
-    # Build ADF (Atlassian Document Format) for description
+    # Build ADF (Atlassian Document Format) for description with line breaks
+    # Each paragraph node renders as a separate line in Jira
+    adf_content = [
+        {"type": "paragraph", "content": [{"type": "text", "text": "Context:"}]}
+    ]
+
+    for kp in key_points:
+        adf_content.append({
+            "type": "paragraph",
+            "content": [{"type": "text", "text": f"- {kp}"}]
+        })
+
+    adf_content.extend([
+        {"type": "paragraph", "content": [{"type": "text", "text": f"Task: {task}"}]},
+        {"type": "paragraph", "content": [{"type": "text", "text": f"Owner: {owner}"}]},
+    ])
+
     adf_description = {
         "type": "doc",
         "version": 1,
-        "content": [
-            {
-                "type": "paragraph",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": formatted_text
-                    }
-                ]
-            }
-        ]
+        "content": adf_content
     }
 
     # Build and return ticket payload
@@ -94,11 +110,9 @@ def create_jira_tickets(
     action_items = insights["action_items"]
     key_points = insights["key_points"]
 
-    # Build Basic auth header
-    auth_str = f"{email}:{api_token}"
-    encoded_auth = base64.b64encode(auth_str.encode()).decode()
+    # Build headers with auth
     headers = {
-        "Authorization": f"Basic {encoded_auth}",
+        "Authorization": _build_auth_header(email, api_token),
         "Content-Type": "application/json"
     }
 
@@ -116,7 +130,7 @@ def create_jira_tickets(
         try:
             # Build and POST ticket
             payload = build_ticket_payload(action_item, key_points, project_key)
-            response = requests.post(endpoint, json=payload, headers=headers)
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
 
             if response.status_code == 201:
                 # Success

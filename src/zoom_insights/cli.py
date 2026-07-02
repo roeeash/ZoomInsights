@@ -28,7 +28,7 @@ from zoom_insights.transcribe import transcribe
 from zoom_insights.insights import summarize
 from zoom_insights.report import write_report, sanitize_topic
 from zoom_insights.idempotency import is_completed, mark_completed
-from zoom_insights.jira_export import create_jira_tickets
+from zoom_insights.jira_export import create_jira_tickets, _build_auth_header
 from groq import Groq
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,7 @@ def _validate_jira_credentials(config: Config) -> None:
     Raises:
         RuntimeError: if credentials are invalid (401/403)
     """
-    auth_str = f"{config.jira_email}:{config.jira_api_token}"
-    encoded_auth = base64.b64encode(auth_str.encode()).decode()
-    headers = {"Authorization": f"Basic {encoded_auth}"}
+    headers = {"Authorization": _build_auth_header(config.jira_email, config.jira_api_token)}
 
     try:
         response = requests.get(
@@ -224,10 +222,9 @@ def _process_meeting(
     """Process a single meeting from index or UUID."""
     logger.info(f"Processing meeting: {meeting_ref}")
 
-    # Validate Jira credentials early if jira export is requested
-    if jira:
-        logger.info("Validating Jira credentials...")
-        _validate_jira_credentials(config)
+    # Validate Jira configuration early if jira export is requested
+    if jira and not all([config.jira_url, config.jira_email, config.jira_api_token, config.jira_project_key]):
+        raise RuntimeError("Jira configuration incomplete; check JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY")
 
     # Resolve meeting reference to UUID
     meeting_uuid = meeting_ref
@@ -247,17 +244,12 @@ def _process_meeting(
             raise
 
     # Check idempotency
-    if is_completed(meeting_uuid):
-        if not force:
-            print(f"Meeting already processed: {meeting_uuid}")
-            response = input("Do you want to reprocess it? (y/n): ").strip().lower()
-            if response != "y":
-                logger.info(f"Meeting {meeting_uuid} skipped; use --force to override")
-                return
-            logger.info(f"Reprocessing meeting {meeting_uuid} (force override)")
-        else:
-            logger.info(f"Reprocessing meeting {meeting_uuid} (--force flag)")
-            print(f"Reprocessing meeting: {meeting_uuid}")
+    if is_completed(meeting_uuid) and not force:
+        logger.warning(f"Meeting {meeting_uuid} already processed; use --force to override")
+        return
+    if is_completed(meeting_uuid) and force:
+        logger.info(f"Reprocessing meeting {meeting_uuid} (--force flag)")
+        print(f"Reprocessing meeting: {meeting_uuid}")
 
     # Fetch meeting recording details
     logger.info(f"Fetching recording for meeting {meeting_uuid}")
@@ -296,18 +288,19 @@ def _process_meeting(
         meeting_uuid=meeting_uuid,
         files=meeting.files,
         token=token,
+        model=config.whisper_model,
     )
     logger.info(f"Transcript: {len(transcript)} characters")
 
     # Extract insights
     logger.info("Stage 5: Extracting insights...")
-    insights = summarize(transcript, groq_client)
+    insights = summarize(transcript, groq_client, model=config.llm_model)
     logger.info("Insights extracted and validated")
 
     # Generate report
     logger.info("Stage 6: Generating report...")
     write_report(meeting.topic, transcript, insights, "output")
-    logger.info(f"Report written to output/{meeting.topic}/")
+    logger.info(f"Report written to output/{sanitize_topic(meeting.topic)}/")
 
     # Auto-export to Jira if requested
     if jira:
@@ -319,8 +312,15 @@ def _process_meeting(
     mark_completed(meeting_uuid)
     logger.info(f"Meeting {meeting_uuid} marked as completed")
 
+    # Cleanup work directory
+    try:
+        shutil.rmtree(os.path.dirname(download_path_str), ignore_errors=True)
+        logger.debug(f"Cleaned up work directory")
+    except Exception as e:
+        logger.debug(f"Could not clean up work directory: {e}")
+
     print(f"\nProcessing complete!")
-    print(f"Report: output/{meeting.topic}/")
+    print(f"Report: output/{sanitize_topic(meeting.topic)}/")
     print(f"  - report.md")
     print(f"  - insights.json")
     print(f"  - transcript.txt")
@@ -354,23 +354,20 @@ def _process_local_file(
     # Use filename as UUID for idempotency tracking
     meeting_uuid = os.path.basename(file_path)
 
-    # Validate Jira credentials early if jira export is requested
+    # Validate Jira configuration early if jira export is requested
     if jira:
-        logger.info("Validating Jira credentials...")
-        _validate_jira_credentials(config)
+        if not config:
+            raise ValueError("config required when jira=True")
+        if not all([config.jira_url, config.jira_email, config.jira_api_token, config.jira_project_key]):
+            raise RuntimeError("Jira configuration incomplete; check JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY")
 
     # Check idempotency
-    if is_completed(meeting_uuid):
-        if not force:
-            print(f"File already processed: {meeting_uuid}")
-            response = input("Do you want to reprocess it? (y/n): ").strip().lower()
-            if response != "y":
-                logger.info(f"File {meeting_uuid} skipped; use --force to override")
-                return
-            logger.info(f"Reprocessing file {meeting_uuid} (force override)")
-        else:
-            logger.info(f"Reprocessing file {meeting_uuid} (--force flag)")
-            print(f"Reprocessing file: {meeting_uuid}")
+    if is_completed(meeting_uuid) and not force:
+        logger.warning(f"File {meeting_uuid} already processed; use --force to override")
+        return
+    if is_completed(meeting_uuid) and force:
+        logger.info(f"Reprocessing file {meeting_uuid} (--force flag)")
+        print(f"Reprocessing file: {meeting_uuid}")
 
     # Copy file to work directory
     logger.info("Stage 1: Copying audio to work directory...")
@@ -392,18 +389,18 @@ def _process_local_file(
 
     # Transcribe (no VTT for local files)
     logger.info("Stage 4: Transcribing audio with Groq Whisper...")
-    transcript = transcribe(segment_paths, groq_client, use_vtt=False)
+    transcript = transcribe(segment_paths, groq_client, use_vtt=False, model=config.whisper_model)
     logger.info(f"Transcript: {len(transcript)} characters")
 
     # Extract insights
     logger.info("Stage 5: Extracting insights...")
-    insights = summarize(transcript, groq_client)
+    insights = summarize(transcript, groq_client, model=config.llm_model)
     logger.info("Insights extracted and validated")
 
     # Generate report
     logger.info("Stage 6: Generating report...")
     write_report(meeting_title, transcript, insights, "output")
-    logger.info(f"Report written to output/{meeting_title}/")
+    logger.info(f"Report written to output/{sanitize_topic(meeting_title)}/")
 
     # Auto-export to Jira if requested
     if jira:
@@ -428,7 +425,7 @@ def _process_local_file(
         logger.warning(f"Could not delete work files: {e}")
 
     print(f"\nProcessing complete!")
-    print(f"Report: output/{meeting_title}/")
+    print(f"Report: output/{sanitize_topic(meeting_title)}/")
     print(f"  - report.md")
     print(f"  - insights.json")
     print(f"  - transcript.txt")

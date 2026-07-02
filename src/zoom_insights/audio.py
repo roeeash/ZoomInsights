@@ -8,8 +8,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-MAX_UPLOAD_MB = 24
-SEGMENT_LENGTH_SECONDS = 900
+GROQ_UPLOAD_CAP_MB = 24  # Conservative buffer under Groq's 25 MB hard limit
+SEGMENT_DURATION_SECONDS = 900  # 15 minutes
 
 
 def require_ffmpeg() -> None:
@@ -53,24 +53,24 @@ def maybe_segment(path: str) -> list[str]:
     file_size_mb = os.path.getsize(path) / (1024 * 1024)
     logger.debug(f"Audio file size: {file_size_mb:.2f} MB")
 
-    if file_size_mb <= MAX_UPLOAD_MB:
-        logger.info(f"Audio under {MAX_UPLOAD_MB} MB; no segmentation needed")
+    if file_size_mb <= GROQ_UPLOAD_CAP_MB:
+        logger.info(f"Audio under {GROQ_UPLOAD_CAP_MB} MB; no segmentation needed")
         return [path]
 
-    logger.info(f"Audio over {MAX_UPLOAD_MB} MB; segmenting into {SEGMENT_LENGTH_SECONDS}s chunks")
+    logger.info(f"Audio over {GROQ_UPLOAD_CAP_MB} MB; segmenting into {SEGMENT_DURATION_SECONDS}s chunks")
 
     # Create output directory for segments
     base_path = Path(path)
     output_dir = base_path.parent / f"{base_path.stem}_segments"
     output_dir.mkdir(exist_ok=True)
 
-    # Segment using ffmpeg
-    segment_pattern = str(output_dir / f"{base_path.stem}_%03d.wav")
+    # Segment using ffmpeg (output as Opus since input is Opus)
+    segment_pattern = str(output_dir / f"{base_path.stem}_%03d.opus")
     cmd = [
         "ffmpeg",
         "-i", path,
         "-f", "segment",
-        "-segment_time", str(SEGMENT_LENGTH_SECONDS),
+        "-segment_time", str(SEGMENT_DURATION_SECONDS),
         "-c", "copy",
         "-y",
         segment_pattern,
@@ -82,7 +82,7 @@ def maybe_segment(path: str) -> list[str]:
         raise RuntimeError(f"ffmpeg segmentation failed: {e.stderr}")
 
     # Collect segment files in order
-    segment_files = sorted(output_dir.glob(f"{base_path.stem}_*.wav"))
+    segment_files = sorted(output_dir.glob(f"{base_path.stem}_*.opus"))
     logger.info(f"Created {len(segment_files)} segments")
 
     return [str(f) for f in segment_files]
