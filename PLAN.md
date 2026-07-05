@@ -161,6 +161,15 @@ Rules: every key present; arrays may be empty; never invent owners/dates — use
 - [x] Cycle 16: Full optimization pass — ✓ Fixed 11 correctness bugs, eliminated unittest.mock, refactored cli.py, 158+ tests passing
 - [x] Cycle 17: Insights enrichment agent — ✓ Auto-enrich insights.json with repo-aware QA recommendations, create Jira subtasks, 170 tests passing
 - [x] Cycle 18: TDD robustness & feature enhancements — ✓ Fixed 11 critical bugs (missing imports, hardcoded model, auth flaws, silent failures, idempotency collision, missing QA rendering), added 15 new tests (185 total passing), zero regressions
+- [ ] Cycle 19: FastAPI wrapper — async job queue, REST API for pipeline
+- [ ] Cycle 20: Webhook automation — auto-process on Zoom recording.completed
+- [ ] Cycle 21: Local/private mode — faster-whisper + Ollama, no audio leaves machine
+- [ ] Cycle 22: Speaker diarization — pyannote, "who said what" in action items
+- [ ] Cycle 23: Quality pass — prompt-injection hardening, eval set, cost/latency metrics
+- [ ] Cycle 24: Slack / Teams integration — post summary card after processing
+- [ ] Cycle 25: Action item follow-up tracker — SQLite, zoom-insights status/done
+- [ ] Cycle 26: Recurring meeting digest — batch rollup report across N days
+- [ ] Cycle 27: Interactive meeting Q&A (RAG) — embed transcripts, query with LLM
 
 **STATUS: MVP COMPLETE ✓ | OPTIMIZATION PASS COMPLETE ✓ | Cycle 16 COMPLETE ✓ | Cycle 17 COMPLETE ✓ | Cycle 18 COMPLETE ✓**
 
@@ -1486,19 +1495,245 @@ pytest -q
 
 ---
 
-### Optional cycles (post-MVP backlog)
+### Cycle 19 — FastAPI wrapper (async job API)
 
-- **Cycle 13 — FastAPI wrapper.** `POST /process {meeting_uuid}` → 202 + job id;
-  `GET /jobs/{id}` → status/result. Background task runs the pipeline.
-- **Cycle 14 — Webhook automation.** Subscribe to `recording.completed`; verify
-  Zoom's signature; auto-process new recordings. (Needs a public URL; ngrok for dev.)
-- **Cycle 15 — Local/private mode.** Swap `transcribe.py` to `faster-whisper`
-  and `insights.py` to an Ollama model behind the same function signatures; a
-  `--local` flag selects the backend. No audio leaves the machine.
-- **Cycle 16 — Speaker diarization.** Local `pyannote` to label segments, merged
-  with Whisper word timestamps → "who said what" in transcript and action items.
-- **Cycle 17 — Quality.** Prompt-injection hardening on transcript→LLM, eval set
-  of meetings with expected action items, cost/latency dashboard.
+**Goal:** Wrap the Zoom Insights pipeline in a FastAPI REST API. `POST /process` submits a job and returns immediately; `GET /jobs/{id}` polls status. Background tasks run the existing pipeline with no changes to core logic.
+
+**Why:** Enables webhook automation (Cycle 20), future UI, and programmatic integrations. The CLI remains unchanged — FastAPI is a new entry point that calls the same internal functions.
+
+**Design**
+
+```
+POST /process   { "file_path": "...", "jira": false }
+  → 202 Accepted { "job_id": "uuid4" }
+
+GET  /jobs/{job_id}
+  → { "status": "queued"|"running"|"done"|"failed",
+      "result": { ...insights... } | null,
+      "error": "string" | null }
+
+GET  /health
+  → { "status": "ok" }
+```
+
+Jobs stored in-process dict. Background task runs `_process_local_file`. Thread-safe with `threading.Lock()`.
+
+**Steps**
+
+1. **New module: `src/zoom_insights/api.py`**
+   - Import FastAPI, create `app = FastAPI(title="Zoom Insights API")`
+   - In-memory job store: `jobs: dict[str, dict] = {}` protected by `threading.Lock()`
+   - `JobStatus` dataclass: `id`, `status`, `result`, `error`, `created_at`
+
+   **Endpoints:**
+   - `POST /process { file_path, jira }` → 202 with job_id
+   - `GET /jobs/{job_id}` → JobStatus dict (queued/running/done/failed)
+   - `GET /health` → `{"status": "ok"}`
+
+   **Background task:**
+   - `_run_pipeline(job_id, file_path, jira)` — runs `_process_local_file`, updates job status
+
+2. **Update `src/zoom_insights/cli.py`**
+   - Add `serve` subcommand: `zoom-insights serve [--port 8000] [--host 0.0.0.0]`
+   - Calls `uvicorn.run("zoom_insights.api:app", ...)`
+
+3. **Update `pyproject.toml`**
+   - Add `fastapi>=0.111.0` and `uvicorn>=0.29.0` to dependencies
+
+**Tests** — `tests/test_api.py`:
+- `test_health_returns_ok` — GET /health → 200
+- `test_process_missing_file_returns_422` — POST with non-existent file → 422
+- `test_process_returns_202_and_job_id` — valid POST → 202 with job_id
+- `test_get_job_unknown_id_returns_404` — GET /jobs/unknown → 404
+- `test_get_job_returns_queued_immediately` — after POST, GET → queued/running
+- `test_job_transitions_to_done` — mock pipeline, assert status→done with result
+- `test_job_transitions_to_failed` — mock pipeline error, assert status→failed
+- `test_multiple_jobs_are_independent` — 2 jobs have separate status tracking
+
+Use `TestClient` from `fastapi.testclient`. Mock pipeline functions with `mocker`.
+
+**Definition of Done**
+- [ ] `src/zoom_insights/api.py` with 3 endpoints
+- [ ] In-memory job store with thread safety
+- [ ] `zoom-insights serve` CLI subcommand
+- [ ] `fastapi` + `uvicorn` in dependencies
+- [ ] 8 tests in `tests/test_api.py` pass
+- [ ] All 185 existing tests still pass (193+ total)
+- [ ] Manual smoke: `uvicorn zoom_insights.api:app --port 8000` runs
+
+---
+
+### Cycle 20 — Webhook automation
+
+**Goal:** Subscribe to Zoom's `recording.completed` webhook event and auto-process new recordings with no manual trigger.
+
+**Why:** Removes the last manual step — recordings are processed the moment they're ready. Requires Cycle 19 FastAPI wrapper.
+
+**Steps (brief)**
+1. Add `POST /webhook` endpoint to FastAPI app (Cycle 19 prerequisite)
+2. Verify Zoom's HMAC-SHA256 signature from `x-zm-signature` header
+3. On valid `recording.completed` event, extract meeting UUID and enqueue job
+4. Respond 200 within 3 seconds (Zoom requires fast ack); processing in background
+5. Add `ZOOM_WEBHOOK_SECRET_TOKEN` to `.env.example` and `Config`
+6. Tests: signature verification, correct job enqueueing, invalid signature → 401
+
+**Definition of Done**
+- [ ] `/webhook` endpoint validates Zoom HMAC signature
+- [ ] Valid events enqueue jobs via job store
+- [ ] Invalid signature → 401
+- [ ] All tests pass
+
+---
+
+### Cycle 21 — Local/private mode
+
+**Goal:** Swap Groq Whisper + Groq LLM with local `faster-whisper` and Ollama via `--local` flag. No audio or transcript leaves the machine.
+
+**Why:** Privacy; reduces API costs; enables offline operation.
+
+**Steps (brief)**
+1. Keep existing function signatures in `transcribe.py`, `insights.py`
+2. Add `--local` flag to CLI
+3. At runtime, swap client implementations based on flag
+4. `faster-whisper` for audio → local text
+5. Ollama API for LLM calls (chunking, map-reduce same as Groq)
+6. Tests: integration tests run both Groq and local backend
+
+**Definition of Done**
+- [ ] `--local` flag toggles backend without changing API
+- [ ] Local pipeline produces same insights.json format
+- [ ] Tests pass for both backends
+
+---
+
+### Cycle 22 — Speaker diarization
+
+**Goal:** Integrate local `pyannote.audio` to label transcript segments with speaker IDs. Merge with Whisper timestamps → "who said what" in action items.
+
+**Why:** Action items gain meaningful owner attribution from actual speaker data (not guessing).
+
+**Steps (brief)**
+1. Add `pyannote.audio` (huggingface) to dependencies
+2. After Whisper transcription, run diarization on audio
+3. Merge speaker labels with Whisper word-level timestamps
+4. Update `insights.json` structure to include speaker attribution
+5. Action items now show actual speaker from diarization, not guessed owner
+
+**Definition of Done**
+- [ ] Diarization runs on audio post-transcription
+- [ ] Speaker labels merged with transcript at word level
+- [ ] Action items show diarized owner
+- [ ] Tests pass
+
+---
+
+### Cycle 23 — Quality pass
+
+**Goal:** Prompt-injection hardening, eval set with expected action items, cost/latency dashboard.
+
+**Why:** Harden security before adding more features; validate model accuracy; understand economics.
+
+**Steps (brief)**
+1. Sanitize transcript before LLM calls (remove suspicious prompt-injection patterns)
+2. Create eval set: 10 real meetings with gold-standard expected action items
+3. Auto-score current model output against eval set
+4. Log token counts, API latencies per meeting → cost estimate
+5. Print metrics: avg cost/meeting, latency, eval score
+
+**Definition of Done**
+- [ ] Transcript sanitization prevents injection attacks
+- [ ] Eval set auto-scores model output
+- [ ] Metrics logged and available via dashboard/CLI
+- [ ] All tests pass
+
+---
+
+### Cycle 24 — Slack / Teams integration
+
+**Goal:** Post a summary card to Slack or Teams after processing a recording.
+
+**Why:** Distributes meeting outcomes async to the team without manual steps.
+
+**Steps (brief)**
+1. New module `src/zoom_insights/notify.py`
+   - `post_slack(insights, webhook_url)` — POST Block Kit card
+   - `post_teams(insights, webhook_url)` — POST Adaptive Card
+   - Card: summary, top 3 action items, link to full report
+2. Add `--notify` flag to CLI; auto-detect platform from URL
+3. Add `SLACK_WEBHOOK_URL` / `TEAMS_WEBHOOK_URL` to `.env.example`
+
+**Definition of Done**
+- [ ] `notify.py` with Slack and Teams posting
+- [ ] `--notify` flag on `zoom-insights <file> --local --notify`
+- [ ] All tests pass
+
+---
+
+### Cycle 25 — Action item follow-up tracker
+
+**Goal:** Persist extracted action items to SQLite and provide `status` / `done` CLI commands.
+
+**Why:** Close the loop — action items tracked from creation through completion.
+
+**Steps (brief)**
+1. New module `src/zoom_insights/tracker.py`
+   - `init_db(path)` — create action_items table
+   - `save_action_items(meeting_id, items, jira_keys)` — upsert
+   - `list_pending()` — overdue and upcoming
+   - `mark_done(task_id)` — set completed_at
+2. `zoom-insights status` — print pending items in table
+3. `zoom-insights done <task_id>` — mark complete
+4. Auto-save after each processing run
+5. DB: `~/.zoom-insights.db` (configurable via `TRACKER_DB`)
+
+**Definition of Done**
+- [ ] SQLite tracker with CRUD ops
+- [ ] `status` and `done` CLI subcommands
+- [ ] Items auto-saved on process
+- [ ] All tests pass
+
+---
+
+### Cycle 26 — Recurring meeting digest
+
+**Goal:** Batch-process all recordings from the past N days and produce a cross-meeting rollup report.
+
+**Why:** High leverage for managers — one weekly report replaces N individual reports.
+
+**Steps (brief)**
+1. New `digest` CLI subcommand: `zoom-insights digest --days 7`
+2. List all Zoom recordings for past N days
+3. Process any not-yet-completed (skip via idempotency log)
+4. Aggregate insights: merge action_items by owner, deduplicate points
+5. Write `output/digest-<dates>/report.md` and `rollup.json`
+6. Optionally post digest to Slack/Teams if `--notify` flag
+
+**Definition of Done**
+- [ ] `digest` processes N days of recordings
+- [ ] Rollup groups items by owner
+- [ ] Respects idempotency (skips already-processed)
+- [ ] All tests pass
+
+---
+
+### Cycle 27 — Interactive meeting Q&A (RAG)
+
+**Goal:** `zoom-insights ask "What did Alice commit to?"` queries stored transcripts using retrieval-augmented generation.
+
+**Why:** "Search my meetings" — high leverage for revisiting or cross-meeting discovery.
+
+**Steps (brief)**
+1. Add `chromadb` (or `faiss-cpu`) + `sentence-transformers` to dependencies
+2. After each processing run, embed transcript chunks and store
+3. `zoom-insights ask "<question>"` — embed Q, retrieve top-K chunks, LLM answer
+4. Source attribution: show meeting and timestamp for each answer
+5. Embeddings stored: `~/.zoom-insights-embeddings/`
+
+**Definition of Done**
+- [ ] Chunks embedded and persisted post-processing
+- [ ] `ask` returns grounded answer with attribution
+- [ ] Works without re-processing if embeddings exist
+- [ ] All tests pass
 
 ---
 
