@@ -168,9 +168,33 @@ zoom-insights ~/Zoom_Recordings/meeting_2024_12_15.m4a --local --title "Team Sta
 zoom-insights ./recording.mp4 --local
 ```
 
-### Option 3: Export to Jira (optional)
+### Option 3: Automatic Enrichment with QA Recommendations (optional)
 
-After processing a meeting, export action items as Jira tickets:
+**Enrichment is automatic!** When you pass an `insights.json` file to the CLI, it automatically enriches it with repository-aware QA recommendations if `CLAUDE_API_KEY` is set:
+
+```bash
+# Automatic enrichment: pass insights.json and it gets enhanced
+zoom-insights output/<meeting>/insights.json
+
+# Optionally save enriched version to a different file instead of overwriting
+zoom-insights output/<meeting>/insights.json --output-file output/<meeting>/insights_enriched.json
+
+# Specify a different repository path (defaults to current directory)
+zoom-insights output/<meeting>/insights.json --repo-path /path/to/repo
+```
+
+This transparently adds a `qa_recommendations` section with:
+- **Test scenarios** — specific test cases to write based on meeting discussion
+- **Features to add** — code improvements or new features identified
+- **Edge cases to cover** — failure modes and boundary conditions
+
+The enriched insights are better for creating Jira tickets that include concrete QA guidance.
+
+**Note:** Enrichment is optional. If `CLAUDE_API_KEY` is not set, the insights file is left as-is. Just use `zoom-insights output/<meeting>/insights.json` and the system will enrich it automatically if possible.
+
+### Option 4: Export to Jira (optional)
+
+After processing a meeting (and optionally enriching it), export action items as Jira tickets:
 
 ```bash
 # Export insights to Jira Cloud
@@ -181,6 +205,7 @@ This creates one Task ticket per action item with:
 - Action item description as title
 - Meeting summary and key points in description
 - Owner and due date (if available)
+- QA recommendations (if insights have been enriched)
 
 Requires Jira Cloud credentials in `.env` (see [Jira Integration](#jira-integration) section).
 
