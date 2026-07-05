@@ -28,6 +28,14 @@ INSIGHTS_SCHEMA = {
         },
         "open_questions": {"type": "array", "items": {"type": "string"}},
         "notable_quotes": {"type": "array", "items": {"type": "string"}},
+        "qa_recommendations": {
+            "type": "object",
+            "properties": {
+                "test_scenarios": {"type": "array", "items": {"type": "string"}},
+                "features_to_add": {"type": "array", "items": {"type": "string"}},
+                "edge_cases_to_cover": {"type": "array", "items": {"type": "string"}},
+            },
+        },
     },
     "required": [
         "summary",
@@ -73,19 +81,19 @@ def map_phase(chunks: list[str], client, model: str) -> list[str]:
         messages = [
             {
                 "role": "system",
-                "content": """You are a meeting analyst. Analyze this transcript chunk and extract:
-- Key discussion points (what was talked about)
-- Decisions made (explicit choices or commitments)
-- Action items (implied or explicit tasks that need to happen - NOT verbatim phrases, but deduced from context)
-- Questions raised (unresolved issues or concerns)
+                "content": """You are a meeting analyst. Analyze this transcript chunk and extract specific, concrete details:
+- Key discussion points: Capture WHAT specifically was discussed, including technical details, tool names, features, concerns, and component names mentioned
+- Decisions made: Explicit choices or commitments (e.g., "we decided to use X", "approved Y")
+- Action items: Tasks that must happen as a result - interpret implied tasks from "we need to", "should", "must", "follow up", "fix", etc. Deduce WHO and WHAT specifically.
+- Questions raised: Unresolved issues, concerns, or unknowns that were discussed
 
-For action items specifically: Look for implied responsibilities like "we need to", "someone should", "by end of week", "follow up on", etc. Deduce WHO should do it and WHAT concretely needs to happen. Do NOT just copy phrases from the transcript.
-
-Be faithful to the original text but interpret and structure information meaningfully. Do not fabricate information.""",
+CRITICAL: Be specific and concrete. Capture actual names, tools, features, concerns mentioned - don't generalize to vague descriptions.
+Action items must be specific (e.g., "Fix performance issue in transcription module" not just "Fix issues").
+Do NOT fabricate information. Do NOT repeat verbatim; interpret meaningfully.""",
             },
             {
                 "role": "user",
-                "content": f"Analyze this meeting chunk and extract meaningful insights:\n\n{chunk_text}",
+                "content": f"Extract key insights from this chunk, focusing on SPECIFIC DETAILS and TECHNICAL CONTENT:\n\n{chunk_text}",
             },
         ]
 
@@ -113,34 +121,53 @@ Be faithful to the original text but interpret and structure information meaning
     return summaries
 
 
-def reduce_phase(summaries: list[str], client, model: str) -> dict:
-    """Combine summaries into the final insights JSON object (reduce phase)."""
+def reduce_phase(summaries: list[str], client, model: str, repo_summary: str = "", agent_guidance: str = "") -> dict:
+    """Combine summaries into final insights JSON with optional QA recommendations."""
     combined_text = "\n\n".join(summaries)
 
-    logger.info("Reducing summaries to final insights")
+    logger.info("Reducing summaries to final insights (with QA recommendations)")
+
+    qa_section = ""
+    agent_context = ""
+    if repo_summary:
+        qa_section = f"""
+- qa_recommendations: QA recommendations based on meeting + repository context
+  * test_scenarios: array of specific test scenarios to write based on meeting discussion and repo code
+  * features_to_add: array of features or improvements mentioned or implied
+  * edge_cases_to_cover: array of edge cases, error conditions, or boundary conditions to test
+  * All recommendations must be specific and traceable to meeting content + code context"""
+
+    if agent_guidance:
+        agent_context = f"""
+
+AGENT GUIDANCE FOR QA PRIORITIZATION:
+{agent_guidance}
+
+Apply this agent's philosophy: prioritize by blast radius and failure cost, not coverage metrics. Focus on tests that protect the critical path and catch regressions affecting the business."""
 
     messages = [
         {
             "role": "system",
-            "content": """You are a meeting analyst. Produce a JSON object with exactly these keys:
-- summary: 3-5 sentence overview of what the meeting was about
-- key_points: list of important discussion points (concise, meaningful interpretations - NOT verbatim)
-- decisions: list of commitments or decisions made explicitly
+            "content": f"""You are a meeting analyst and QA engineer. Produce a JSON object with these keys:
+- summary: 2-3 sentence overview capturing WHAT was discussed, including specific tools, concerns, or technical details mentioned
+- key_points: list of specific discussion points - include tool names, features, technical concerns, and concrete details discussed
+- decisions: list of explicit commitments or decisions made (e.g., "decided to implement X", "approved Y feature")
 - action_items: list of objects with owner (string|null), task (string), due (string|null)
-  * CRITICAL: Action items are things that need to HAPPEN as a result of this meeting
-  * Deduce implied tasks from context ("we should follow up on X", "Y needs approval", "Z must be tested")
-  * Task should be specific and actionable (e.g., "Review Q4 budget proposal" not just "Budget")
-  * Do NOT copy verbatim phrases; interpret and structure them as concrete next steps
-  * If owner is not mentioned, use null (don't guess)
-  * If no clear due date, use null (don't make one up)
-- open_questions: list of unresolved issues or concerns from discussion
-- notable_quotes: list of important direct quotes that capture key moments
+  * CRITICAL: Action items are concrete tasks that must happen as a result of this meeting
+  * Include specific WHAT: "Fix bug in transcription" not "Fix issues"
+  * Deduce implied tasks from "we should", "we need to", "must", "follow up", "test", "implement", etc.
+  * If owner is not mentioned, use null (don't guess names)
+  * If no clear due date, use null (don't invent dates)
+  * Each action item must be traceable to meeting content
+- open_questions: list of specific unresolved issues or technical concerns raised (not generic questions)
+- notable_quotes: list of important direct quotes (only if meeting actually contains quotable moments, else empty){qa_section}
 
-Do not invent information that wasn't discussed. Use null for missing data. Every action item must be traceable back to the meeting content.""",
+CRITICAL: Capture SPECIFICITY - tool names, technical details, component names, feature names.
+Do NOT invent information. Do NOT be vague or generic.{agent_context}""",
         },
         {
             "role": "user",
-            "content": f"Create structured insights JSON from these meeting summaries. Focus on MEANINGFUL, DEDUCED action items (not verbatim copies):\n\n{combined_text}",
+            "content": f"Create structured insights JSON. Emphasize SPECIFIC DETAILS, TECHNICAL CONTENT, and CONCRETE ACTION ITEMS:{repo_summary if repo_summary else ''}\n\n{combined_text}",
         },
     ]
 
@@ -176,16 +203,18 @@ Do not invent information that wasn't discussed. Use null for missing data. Ever
         raise
 
 
-def summarize(transcript: str, client, model: str) -> dict:
-    """Execute the full map-reduce pipeline and return schema-valid insights.
+def summarize(transcript: str, client, model: str, repo_summary: str = "", agent_guidance: str = "") -> dict:
+    """Execute the full map-reduce pipeline and return schema-valid insights with QA recommendations.
 
     Args:
         transcript: Full meeting transcript text.
         client: Groq API client.
         model: LLM model name to use.
+        repo_summary: Optional repository code summary for QA recommendations.
+        agent_guidance: Optional agent guidance for QA prioritization (blast radius, failure cost, etc).
 
     Returns:
-        Dictionary matching INSIGHTS_SCHEMA.
+        Dictionary matching INSIGHTS_SCHEMA (with optional qa_recommendations).
     """
     logger.info("Starting insight extraction pipeline")
 
@@ -196,8 +225,8 @@ def summarize(transcript: str, client, model: str) -> dict:
     # Map phase: summarize each chunk
     summaries = map_phase(chunks_list, client, model)
 
-    # Reduce phase: combine into final insights
-    insights = reduce_phase(summaries, client, model)
+    # Reduce phase: combine into final insights with QA recommendations
+    insights = reduce_phase(summaries, client, model, repo_summary, agent_guidance)
 
     # Validate against schema
     try:

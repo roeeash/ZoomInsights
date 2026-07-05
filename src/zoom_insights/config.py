@@ -20,6 +20,7 @@ class Config:
     jira_email: str = ""
     jira_api_token: str = ""
     jira_project_key: str = ""
+    claude_api_key: str = ""
 
     def validate(self) -> None:
         """Validate that all required fields are set; raise ValueError if any are missing."""
@@ -53,6 +54,7 @@ def load_config() -> Config:
         jira_email=os.getenv("JIRA_EMAIL", ""),
         jira_api_token=os.getenv("JIRA_API_TOKEN", ""),
         jira_project_key=os.getenv("JIRA_PROJECT_KEY", ""),
+        claude_api_key=os.getenv("CLAUDE_API_KEY", ""),
     )
 
     config.validate()
