@@ -117,7 +117,10 @@ class TestMaybeSegment:
         mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
         mocker.patch("os.path.getsize", return_value=(GROQ_UPLOAD_CAP_MB + 10) * 1024 * 1024)
         mock_run = mocker.patch("subprocess.run")
-        mocker.patch("pathlib.Path.glob", return_value=[])
+        # Mock glob to return fake segment files
+        mock_segment_file = mocker.MagicMock()
+        mock_segment_file.__str__ = mocker.MagicMock(return_value="/audio_000.opus")
+        mocker.patch("pathlib.Path.glob", return_value=[mock_segment_file])
         mocker.patch("pathlib.Path.mkdir")
 
         maybe_segment("/audio.opus")
@@ -149,12 +152,34 @@ class TestMaybeSegment:
                 maybe_segment(audio_path)
             assert "ffmpeg segmentation failed" in str(exc_info.value)
 
+    def test_maybe_segment_empty_raises(self, mocker):
+        """Test that maybe_segment raises RuntimeError when ffmpeg produces no segment files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a fake audio file
+            audio_path = os.path.join(tmpdir, "audio.opus")
+            with open(audio_path, "w") as f:
+                f.write("fake audio data")
+
+            mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
+            mocker.patch("os.path.getsize", return_value=(GROQ_UPLOAD_CAP_MB + 10) * 1024 * 1024)
+            mocker.patch("subprocess.run")  # ffmpeg succeeds but creates no output
+
+            # Mock glob to return empty list (no segments created)
+            with pytest.raises(RuntimeError) as exc_info:
+                maybe_segment(audio_path)
+
+            assert "produced no output files" in str(exc_info.value).lower() or \
+                   "segmentation produced no" in str(exc_info.value).lower()
+
     def test_maybe_segment_creates_output_directory(self, mocker):
         """Test that output directory is created for segments."""
         mocker.patch("shutil.which", return_value="/usr/bin/ffmpeg")
         mocker.patch("os.path.getsize", return_value=(GROQ_UPLOAD_CAP_MB + 10) * 1024 * 1024)
         mocker.patch("subprocess.run")
-        mocker.patch("pathlib.Path.glob", return_value=[])
+        # Mock glob to return fake segment files
+        mock_segment_file = mocker.MagicMock()
+        mock_segment_file.__str__ = mocker.MagicMock(return_value="/audio_000.opus")
+        mocker.patch("pathlib.Path.glob", return_value=[mock_segment_file])
         mock_mkdir = mocker.patch("pathlib.Path.mkdir")
         maybe_segment("/audio/audio.opus")
         mock_mkdir.assert_called()

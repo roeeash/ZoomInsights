@@ -295,3 +295,54 @@ class TestWriteReport:
 
             # Should create directory without special chars
             assert os.path.exists(os.path.join(tmpdir, "Q4_Strategy"))
+
+
+@pytest.mark.unit
+class TestQARecommendationsInReport:
+    """Tests for QA recommendations rendering in reports."""
+
+    def test_render_report_includes_qa_recommendations(self):
+        """Test that QA recommendations are rendered in the report when present."""
+        insights = {
+            "summary": "Meeting summary",
+            "key_points": [],
+            "decisions": [],
+            "action_items": [],
+            "open_questions": [],
+            "notable_quotes": [],
+            "qa_recommendations": {
+                "test_scenarios": ["Test scenario 1", "Test scenario 2"],
+                "features_to_add": ["Feature A", "Feature B"],
+                "edge_cases_to_cover": ["Edge case 1"],
+            }
+        }
+        report = _render_report("Test Meeting", insights)
+
+        # Check that QA Recommendations section exists
+        assert "## QA Recommendations" in report
+        assert "### Test Scenarios" in report
+        assert "Test scenario 1" in report
+        assert "Test scenario 2" in report
+        assert "### Features to Add" in report
+        assert "Feature A" in report
+        assert "Feature B" in report
+        assert "### Edge Cases to Cover" in report
+        assert "Edge case 1" in report
+
+    def test_render_report_no_qa_if_absent(self):
+        """Test that QA Recommendations section is not rendered when absent."""
+        insights = {
+            "summary": "Meeting summary",
+            "key_points": [],
+            "decisions": [],
+            "action_items": [],
+            "open_questions": [],
+            "notable_quotes": [],
+        }
+        report = _render_report("Test Meeting", insights)
+
+        # QA Recommendations section should not appear
+        assert "## QA Recommendations" not in report
+        assert "### Test Scenarios" not in report
+        assert "### Features to Add" not in report
+        assert "### Edge Cases to Cover" not in report

@@ -182,6 +182,11 @@ class TestCreateJiraTickets:
             "key_points": ["Point 1"]
         }
 
+        # Mock preflight (GET /myself)
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
+
         mock_response = mocker.MagicMock()
         mock_response.status_code = 201
         mock_response.json.return_value = {"key": "PROJ-1"}
@@ -217,6 +222,11 @@ class TestCreateJiraTickets:
             ],
             "key_points": ["Point A", "Point B"]
         }
+
+        # Mock preflight
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
 
         mock_response = mocker.MagicMock()
         mock_response.status_code = 201
@@ -259,6 +269,11 @@ class TestCreateJiraTickets:
             "key_points": ["Point"]
         }
 
+        # Mock preflight
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
+
         mock_response = mocker.MagicMock()
         mock_response.status_code = 201
         mock_response.json.return_value = {"key": "PROJ-1"}
@@ -287,6 +302,11 @@ class TestCreateJiraTickets:
             ],
             "key_points": ["Point"]
         }
+
+        # Mock preflight
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
 
         # Mock responses: success, error, success
         responses = [
@@ -362,6 +382,11 @@ class TestCreateJiraTickets:
             "key_points": ["Point"]
         }
 
+        # Mock preflight
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
+
         mock_post = mocker.patch("zoom_insights.jira_export.requests.post")
         created_keys = create_jira_tickets(
             insights,
@@ -371,7 +396,7 @@ class TestCreateJiraTickets:
             "PROJ"
         )
 
-        # No POST calls should be made
+        # No POST calls should be made (except preflight GET is called)
         assert mock_post.call_count == 0
         assert created_keys == []
 
@@ -383,6 +408,11 @@ class TestCreateJiraTickets:
             ],
             "key_points": ["Docs complete"]
         }
+
+        # Mock preflight
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
 
         mock_response = mocker.MagicMock()
         mock_response.status_code = 201
@@ -411,3 +441,100 @@ class TestCreateJiraTickets:
         assert description["version"] == 1
 
         assert created_keys == ["PROJ-42"]
+
+    def test_auth_preflight_raises_before_any_ticket(self, mocker):
+        """Test that auth validation failure raises before creating any tickets."""
+        insights = {
+            "action_items": [
+                {"task": "Task 1", "owner": "Alice", "due": None}
+            ],
+            "key_points": ["Point"]
+        }
+
+        # Mock preflight to return 401
+        mock_preflight = mocker.MagicMock()
+        mock_preflight.status_code = 401
+        mock_preflight.text = "Unauthorized"
+
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_preflight)
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            create_jira_tickets(
+                insights,
+                "https://test.atlassian.net",
+                "test@test.com",
+                "bad_token",
+                "PROJ"
+            )
+
+        assert "authentication failed" in str(exc_info.value).lower()
+        # Verify no POST calls were made
+        assert mock_post.call_count == 0
+
+    def test_auth_header_built_once(self, mocker):
+        """Test that auth header is built once, not per ticket."""
+        insights = {
+            "action_items": [
+                {"task": "Task 1", "owner": "Alice", "due": None},
+                {"task": "Task 2", "owner": "Bob", "due": None},
+                {"task": "Task 3", "owner": "Charlie", "due": None}
+            ],
+            "key_points": ["Point"]
+        }
+
+        # Mock preflight success
+        mock_preflight = mocker.MagicMock()
+        mock_preflight.status_code = 200
+
+        mock_response = mocker.MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"key": "PROJ-1"}
+
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_preflight)
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post", return_value=mock_response)
+
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
+
+        assert len(created_keys) == 3
+        # All POST calls should have the same Authorization header
+        for call in mock_post.call_args_list:
+            assert call[1]["headers"]["Authorization"].startswith("Basic ")
+
+    def test_qa_recommendations_in_ticket_description(self, mocker):
+        """Test that qa_recommendations appear in the ticket description ADF."""
+        action_item = {
+            "task": "Optimize performance",
+            "owner": "Alice",
+            "due": "2024-12-31"
+        }
+        key_points = ["Performance target: <1s response time"]
+
+        qa_recommendations = {
+            "test_scenarios": ["Load test with 1000 concurrent users"],
+            "features_to_add": ["Caching layer"],
+            "edge_cases_to_cover": ["Network timeouts"]
+        }
+
+        payload = build_ticket_payload(action_item, key_points, "PROJ", qa_recommendations=qa_recommendations)
+
+        description = payload["fields"]["description"]
+        # Extract all text from all paragraphs
+        description_text = " ".join([
+            para["content"][0]["text"] for para in description["content"]
+        ])
+
+        # Verify QA recommendations appear in description
+        assert "QA Recommendations:" in description_text
+        assert "Test Scenarios:" in description_text
+        assert "Load test with 1000 concurrent users" in description_text
+        assert "Features to Add:" in description_text
+        assert "Caching layer" in description_text
+        assert "Edge Cases to Cover:" in description_text
+        assert "Network timeouts" in description_text
