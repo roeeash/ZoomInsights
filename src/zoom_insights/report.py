@@ -132,4 +132,37 @@ def _render_report(topic: str, insights: dict) -> str:
             lines.append(f"> {quote}")
         lines.append("")
 
+    # QA Recommendations
+    qa_recommendations = insights.get("qa_recommendations")
+    if qa_recommendations:
+        lines.append("## QA Recommendations")
+        lines.append("")
+
+        # Test Scenarios
+        test_scenarios = qa_recommendations.get("test_scenarios", [])
+        if test_scenarios:
+            lines.append("### Test Scenarios")
+            for scenario in test_scenarios:
+                scenario_text = scenario if isinstance(scenario, str) else scenario.get("title", str(scenario))
+                lines.append(f"- {scenario_text}")
+            lines.append("")
+
+        # Features to Add
+        features = qa_recommendations.get("features_to_add", [])
+        if features:
+            lines.append("### Features to Add")
+            for feature in features:
+                feature_text = feature if isinstance(feature, str) else feature.get("title", str(feature))
+                lines.append(f"- {feature_text}")
+            lines.append("")
+
+        # Edge Cases to Cover
+        edge_cases = qa_recommendations.get("edge_cases_to_cover", [])
+        if edge_cases:
+            lines.append("### Edge Cases to Cover")
+            for edge_case in edge_cases:
+                edge_case_text = edge_case if isinstance(edge_case, str) else edge_case.get("scenario", str(edge_case))
+                lines.append(f"- {edge_case_text}")
+            lines.append("")
+
     return "\n".join(lines)
