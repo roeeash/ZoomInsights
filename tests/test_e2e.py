@@ -273,6 +273,11 @@ def test_e2e_jira_ticket_not_created(case_name, build_response, mocker, sample_i
 
     Parametrized over bad_request_response and server_error_response factories.
     """
+    # Mock preflight (GET /myself) to succeed
+    mock_get = mocker.MagicMock()
+    mock_get.status_code = 200
+    mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
+
     # Mock requests.post to return error response
     error_resp = build_response(mocker)
     mocker.patch("zoom_insights.jira_export.requests.post", return_value=error_resp)
