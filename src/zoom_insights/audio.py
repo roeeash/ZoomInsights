@@ -85,4 +85,9 @@ def maybe_segment(path: str) -> list[str]:
     segment_files = sorted(output_dir.glob(f"{base_path.stem}_*.opus"))
     logger.info(f"Created {len(segment_files)} segments")
 
+    if not segment_files:
+        raise RuntimeError(
+            f"Segmentation produced no output files — check ffmpeg installation and input file format"
+        )
+
     return [str(f) for f in segment_files]
