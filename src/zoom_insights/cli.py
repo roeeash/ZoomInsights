@@ -29,7 +29,9 @@ from zoom_insights.insights import summarize
 from zoom_insights.report import write_report, sanitize_topic
 from zoom_insights.idempotency import is_completed, mark_completed
 from zoom_insights.jira_export import create_jira_tickets, _build_auth_header
+from zoom_insights.enrich_insights import enrich_insights_with_repo_context, read_repo_code_summary
 from groq import Groq
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,37 @@ def _validate_jira_credentials(config: Config) -> None:
         raise RuntimeError(f"Error validating Jira credentials: {e}")
 
 
+def _load_agent_guidance() -> str:
+    """Load the client-facing automation engineer agent's guidance.
+
+    Returns:
+        Agent guidance text for QA recommendations context, or empty string if not found.
+    """
+    # Resolve path relative to project root (not CWD)
+    project_root = Path(__file__).parent.parent.parent
+    agent_path = project_root / ".claude" / "agents" / "client-facing-automation-engineer.md"
+
+    if not agent_path.exists():
+        return ""
+
+    try:
+        with open(str(agent_path), "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Extract content after frontmatter (skip YAML)
+        if "---" in content:
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                guidance = parts[2].strip()
+                return guidance
+
+        return content
+    except Exception as e:
+        logger.debug(f"Could not load agent guidance: {e}")
+        return ""
+
+
+
 def main() -> None:
     """Main entry point for the CLI orchestrating the full pipeline."""
     parser = argparse.ArgumentParser(
@@ -73,7 +106,7 @@ def main() -> None:
         "action",
         nargs="?",
         default="list",
-        help="Action: 'list' (default), or meeting index/UUID to process, or path to local file (with --local)",
+        help="Action: 'list' (default), 'jira', or meeting index/UUID to process (with Zoom), or path to insights.json/local file (with --local)",
     )
     parser.add_argument(
         "--local",
@@ -110,6 +143,17 @@ def main() -> None:
         type=str,
         help="Path to insights.json for Jira export (used with 'jira' action)",
     )
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        help="Output file path for enriched insights (auto-enrichment when passing insights.json)",
+    )
+    parser.add_argument(
+        "--repo-path",
+        type=str,
+        default=".",
+        help="Path to repository for code context (auto-enrichment when passing insights.json, default: current dir)",
+    )
 
     args = parser.parse_args()
 
@@ -122,6 +166,13 @@ def main() -> None:
             config = load_config()
             logger.info("Configuration loaded")
             _export_to_jira(args.insights, config)
+            return
+
+        # Check if insights.json file is passed (auto-enrich it)
+        if args.action and os.path.isfile(args.action) and args.action.endswith("insights.json"):
+            config = load_config()
+            logger.info("Configuration loaded")
+            _enrich_insights_cmd(args.action, args.output_file, args.repo_path, config)
             return
 
         # Check ffmpeg availability early
@@ -293,8 +344,10 @@ def _process_meeting(
     logger.info(f"Transcript: {len(transcript)} characters")
 
     # Extract insights
-    logger.info("Stage 5: Extracting insights...")
-    insights = summarize(transcript, groq_client, model=config.llm_model)
+    logger.info("Stage 5: Extracting insights with QA recommendations...")
+    repo_summary = read_repo_code_summary(".")
+    agent_guidance = _load_agent_guidance()
+    insights = summarize(transcript, groq_client, model=config.llm_model, repo_summary=repo_summary, agent_guidance=agent_guidance)
     logger.info("Insights extracted and validated")
 
     # Generate report
@@ -351,8 +404,8 @@ def _process_local_file(
         meeting_title = os.path.splitext(os.path.basename(file_path))[0]
         logger.info(f"Extracted title from filename: {meeting_title}")
 
-    # Use filename as UUID for idempotency tracking
-    meeting_uuid = os.path.basename(file_path)
+    # Use absolute path as UUID for idempotency tracking (to distinguish same-named files in different dirs)
+    meeting_uuid = str(Path(file_path).resolve())
 
     # Validate Jira configuration early if jira export is requested
     if jira:
@@ -360,6 +413,8 @@ def _process_local_file(
             raise ValueError("config required when jira=True")
         if not all([config.jira_url, config.jira_email, config.jira_api_token, config.jira_project_key]):
             raise RuntimeError("Jira configuration incomplete; check JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY")
+        # Validate Jira credentials early
+        _validate_jira_credentials(config)
 
     # Check idempotency
     if is_completed(meeting_uuid) and not force:
@@ -393,8 +448,10 @@ def _process_local_file(
     logger.info(f"Transcript: {len(transcript)} characters")
 
     # Extract insights
-    logger.info("Stage 5: Extracting insights...")
-    insights = summarize(transcript, groq_client, model=config.llm_model)
+    logger.info("Stage 5: Extracting insights with QA recommendations...")
+    repo_summary = read_repo_code_summary(".")
+    agent_guidance = _load_agent_guidance()
+    insights = summarize(transcript, groq_client, model=config.llm_model, repo_summary=repo_summary, agent_guidance=agent_guidance)
     logger.info("Insights extracted and validated")
 
     # Generate report
@@ -429,6 +486,81 @@ def _process_local_file(
     print(f"  - report.md")
     print(f"  - insights.json")
     print(f"  - transcript.txt")
+
+
+def _enrich_insights_cmd(
+    insights_path: str,
+    output_file: Optional[str],
+    repo_path: str,
+    config: Config,
+) -> None:
+    """Enrich insights with repository-aware QA recommendations.
+
+    Args:
+        insights_path: Path to insights.json file (or used as input file path)
+        output_file: Path to write enriched insights (if None, overwrites input)
+        repo_path: Path to repository for code context
+        config: Configuration object with Claude API key
+
+    Raises:
+        SystemExit: on validation or file errors
+    """
+    # Check Groq API key is set
+    if not config.groq_api_key:
+        logger.debug("Groq API key not set; skipping automatic enrichment")
+        return
+
+    # Check insights file is provided and exists
+    if not insights_path:
+        logger.debug("No insights path provided; skipping enrichment")
+        return
+
+    if not os.path.isfile(insights_path):
+        print(f"Error: Insights file not found: {insights_path}")
+        sys.exit(1)
+
+    # Load and parse insights.json
+    try:
+        with open(insights_path, "r") as f:
+            insights = json.load(f)
+        logger.info(f"Loaded insights from {insights_path}")
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in {insights_path}: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: Failed to read {insights_path}: {e}")
+        sys.exit(1)
+
+    # Enrich insights
+    logger.info("Enriching insights with QA recommendations...")
+    try:
+        enriched_insights = enrich_insights_with_repo_context(
+            insights,
+            repo_path,
+            config.groq_api_key,
+            model=config.llm_model
+        )
+        logger.info("Insights enriched successfully")
+    except ValueError as e:
+        print(f"Error: {e}")
+        logger.error(f"Validation error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: Failed to enrich insights: {e}")
+        logger.exception(f"Exception enriching insights: {e}")
+        sys.exit(1)
+
+    # Write enriched insights to file
+    output_path = output_file or insights_path
+    try:
+        with open(output_path, "w") as f:
+            json.dump(enriched_insights, f, indent=2)
+        logger.info(f"Enriched insights written to {output_path}")
+        print(f"Enriched insights written to: {output_path}")
+    except Exception as e:
+        print(f"Error: Failed to write output file: {e}")
+        logger.exception(f"Exception writing output: {e}")
+        sys.exit(1)
 
 
 def _export_to_jira(insights_path: Optional[str], config: Config) -> None:
