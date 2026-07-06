@@ -30,6 +30,7 @@ from zoom_insights.report import write_report, sanitize_topic
 from zoom_insights.idempotency import is_completed, mark_completed
 from zoom_insights.jira_export import create_jira_tickets, _build_auth_header
 from zoom_insights.enrich_insights import enrich_insights_with_repo_context, read_repo_code_summary
+from zoom_insights.notify import post_notification
 from groq import Groq
 from pathlib import Path
 
@@ -154,6 +155,17 @@ def main() -> None:
         default=".",
         help="Path to repository for code context (auto-enrichment when passing insights.json, default: current dir)",
     )
+    parser.add_argument(
+        "--task-id",
+        type=str,
+        help="Task ID to mark as done (used with 'done' action)",
+    )
+    parser.add_argument(
+        "--notify",
+        type=str,
+        default="",
+        help="Post summary to Slack or Teams webhook URL (optional; auto-detects platform)",
+    )
 
     args = parser.parse_args()
 
@@ -162,6 +174,21 @@ def main() -> None:
 
     try:
         # Check if Jira action is being used (skip Zoom/Groq setup if so)
+        # Check if status command is being used
+        if args.action == "status":
+            config = load_config()
+            _status_command(config)
+            return
+
+        # Check if done command is being used
+        if args.action == "done":
+            if not args.task_id:
+                print("Error: --task-id <id> required for 'done' command")
+                sys.exit(1)
+            config = load_config()
+            _done_command(args.task_id, config)
+            return
+
         if args.action == "jira":
             config = load_config()
             logger.info("Configuration loaded")
@@ -203,6 +230,7 @@ def main() -> None:
                 force=args.force,
                 jira=args.jira,
                 config=config,
+                notify=args.notify,
             )
             return
 
@@ -226,6 +254,7 @@ def main() -> None:
             work_dir=work_dir,
             force=args.force,
             jira=args.jira,
+            notify=args.notify,
         )
 
     except ValueError as e:
@@ -269,6 +298,7 @@ def _process_meeting(
     work_dir: str = "work",
     force: bool = False,
     jira: bool = False,
+    notify: str = "",
 ) -> None:
     """Process a single meeting from index or UUID."""
     logger.info(f"Processing meeting: {meeting_ref}")
@@ -355,6 +385,15 @@ def _process_meeting(
     write_report(meeting.topic, transcript, insights, "output")
     logger.info(f"Report written to output/{sanitize_topic(meeting.topic)}/")
 
+    # Post notification if requested
+    if notify:
+        logger.info(f"Posting notification to {notify}")
+        success = post_notification(insights, notify)
+        if success:
+            logger.info("Notification posted successfully")
+        else:
+            logger.warning("Notification posting failed")
+
     # Auto-export to Jira if requested
     if jira:
         report_dir = os.path.join("output", sanitize_topic(meeting.topic))
@@ -362,6 +401,12 @@ def _process_meeting(
         _export_to_jira(insights_path, config)
 
     # Mark as completed
+    # Auto-save action items to tracker
+    if config.tracker_db:
+        from zoom_insights.tracker import save_action_items
+        save_action_items(config.tracker_db, meeting_uuid, insights.get("action_items", []))
+        logger.info(f"Saved action items to tracker")
+
     mark_completed(meeting_uuid)
     logger.info(f"Meeting {meeting_uuid} marked as completed")
 
@@ -387,6 +432,7 @@ def _process_local_file(
     force: bool = False,
     jira: bool = False,
     config: Config = None,
+    notify: str = "",
 ) -> None:
     """Process a locally saved Zoom recording file."""
     logger.info(f"Processing local file: {file_path}")
@@ -459,6 +505,15 @@ def _process_local_file(
     write_report(meeting_title, transcript, insights, "output")
     logger.info(f"Report written to output/{sanitize_topic(meeting_title)}/")
 
+    # Post notification if requested
+    if notify:
+        logger.info(f"Posting notification to {notify}")
+        success = post_notification(insights, notify)
+        if success:
+            logger.info("Notification posted successfully")
+        else:
+            logger.warning("Notification posting failed")
+
     # Auto-export to Jira if requested
     if jira:
         report_dir = os.path.join("output", sanitize_topic(meeting_title))
@@ -470,6 +525,12 @@ def _process_local_file(
     logger.info(f"File {meeting_uuid} marked as completed")
 
     # Cleanup work files
+    # Auto-save action items to tracker
+    if config.tracker_db:
+        from zoom_insights.tracker import save_action_items
+        save_action_items(config.tracker_db, meeting_uuid, insights.get("action_items", []))
+        logger.info(f"Saved action items to tracker")
+
     logger.info("Cleaning up temporary work files...")
     try:
         os.remove(work_file)
@@ -628,4 +689,77 @@ def _export_to_jira(insights_path: Optional[str], config: Config) -> None:
     except Exception as e:
         print(f"Error: Failed to create tickets: {e}")
         logger.exception(f"Exception creating tickets: {e}")
+        sys.exit(1)
+
+
+def _status_command(config: Config) -> None:
+    """Display pending action items status.
+
+    Args:
+        config: Configuration object with tracker_db path
+    """
+    from zoom_insights.tracker import list_pending, get_overdue
+
+    if not config.tracker_db:
+        print("Error: TRACKER_DB not configured")
+        return
+
+    pending = list_pending(config.tracker_db)
+    overdue = get_overdue(config.tracker_db)
+
+    if not pending:
+        print("No pending action items.")
+        return
+
+    # Separate pending into overdue, upcoming, and no due date
+    upcoming = [item for item in pending if item not in overdue and item["due_date"]]
+    no_due_date = [item for item in pending if not item["due_date"]]
+
+    print(f"\nPending Action Items ({len(pending)} total)")
+    print("=" * 48)
+
+    if overdue:
+        print(f"\nOVERDUE ({len(overdue)} items):")
+        for item in overdue:
+            owner_str = f"({item['owner']})" if item["owner"] else "(unassigned)"
+            due_str = f" (due: {item['due_date']})" if item["due_date"] else ""
+            print(f"  - [{item['task_id']}] {owner_str} {item['task']}{due_str}")
+
+    if upcoming:
+        print(f"\nUPCOMING ({len(upcoming)} items):")
+        for item in upcoming:
+            owner_str = f"({item['owner']})" if item["owner"] else "(unassigned)"
+            due_str = f" (due: {item['due_date']})" if item["due_date"] else ""
+            print(f"  - [{item['task_id']}] {owner_str} {item['task']}{due_str}")
+
+    if no_due_date:
+        print(f"\nNO DUE DATE ({len(no_due_date)} items):")
+        for item in no_due_date:
+            owner_str = f"({item['owner']})" if item["owner"] else "(unassigned)"
+            print(f"  - [{item['task_id']}] {owner_str} {item['task']}")
+
+
+def _done_command(task_id: str, config: Config) -> None:
+    """Mark an action item as done.
+
+    Args:
+        task_id: Task ID to mark as done
+        config: Configuration object with tracker_db path
+
+    Raises:
+        SystemExit: if task_id not found
+    """
+    from zoom_insights.tracker import mark_done
+
+    if not config.tracker_db:
+        print("Error: TRACKER_DB not configured")
+        sys.exit(1)
+
+    success = mark_done(config.tracker_db, task_id)
+
+    if success:
+        print(f"Marked {task_id} as done")
+        logger.info(f"marked task {task_id} as done")
+    else:
+        print(f"Task {task_id} not found")
         sys.exit(1)
