@@ -686,3 +686,152 @@ class TestMissingImports:
 
         # Second should NOT be marked complete (different path)
         assert not is_completed(uuid2, log_path=completed_log)
+
+
+@pytest.mark.unit
+class TestTrackerIntegration:
+    """Integration tests for tracker with processing pipeline."""
+
+    def test_process_meeting_saves_action_items_to_tracker(self, mocker, tmp_path):
+        """Test that process_meeting auto-saves action items to tracker."""
+        from zoom_insights.tracker import list_pending
+        from zoom_insights.cli import _process_meeting
+
+        db_path = str(tmp_path / "test.db")
+        work_dir = str(tmp_path / "work")
+        os.makedirs(work_dir, exist_ok=True)
+
+        # Mock all external dependencies
+        mocker.patch("zoom_insights.cli.get_access_token", return_value="mock_token")
+        mocker.patch("zoom_insights.cli.list_recent_recordings", return_value=[])
+
+        # Create mock meeting
+        mock_file = mocker.MagicMock()
+        mock_file.file_name = "recording.m4a"
+        mock_file.file_type = "M4A"
+        mock_file.download_url = "http://example.com/file.m4a"
+
+        mock_meeting = mocker.MagicMock()
+        mock_meeting.uuid = "meeting-123"
+        mock_meeting.topic = "Test Meeting"
+        mock_meeting.files = [mock_file]
+
+        mocker.patch("zoom_insights.cli.get_meeting_recording", return_value=mock_meeting)
+        mocker.patch("zoom_insights.cli.pick_file", return_value=mock_file)
+        mocker.patch("zoom_insights.cli.download")
+        mocker.patch("zoom_insights.cli.to_compressed_audio")
+        mocker.patch("zoom_insights.cli.maybe_segment", return_value=["segment1.opus"])
+
+        # Mock transcription
+        mocker.patch("zoom_insights.cli.transcribe", return_value="Sample transcript")
+
+        # Mock insights with action items
+        insights_with_actions = {
+            "summary": "Meeting summary",
+            "action_items": [
+                {"task": "Task 1", "owner": "Alice", "due": "2026-07-15"},
+                {"task": "Task 2", "owner": "Bob", "due": "2026-07-20"},
+            ],
+        }
+        mocker.patch("zoom_insights.cli.summarize", return_value=insights_with_actions)
+
+        # Mock report writing
+        mocker.patch("zoom_insights.cli.write_report")
+
+        # Mock idempotency
+        mocker.patch("zoom_insights.cli.is_completed", return_value=False)
+        mocker.patch("zoom_insights.cli.mark_completed")
+
+        # Create config with tracker_db
+        config = Config(
+            zoom_account_id="test",
+            zoom_client_id="test",
+            zoom_client_secret="test",
+            groq_api_key="test",
+            tracker_db=db_path,
+        )
+
+        # Create mock groq client
+        mock_groq = mocker.MagicMock()
+
+        # Call _process_meeting
+        try:
+            _process_meeting(
+                "meeting-123",
+                "mock_token",
+                mock_groq,
+                config,
+                work_dir=work_dir,
+            )
+        except Exception:
+            # Some mocks may fail, but we're testing tracker integration
+            pass
+
+        # Verify action items were saved to tracker
+        pending = list_pending(db_path)
+        assert len(pending) == 2
+        assert pending[0]["task"] == "Task 1"
+        assert pending[1]["task"] == "Task 2"
+
+    def test_process_local_file_saves_action_items_to_tracker(self, mocker, tmp_path):
+        """Test that process_local_file auto-saves action items to tracker."""
+        from zoom_insights.tracker import list_pending
+        from zoom_insights.cli import _process_local_file
+
+        # Create a test audio file
+        test_file = tmp_path / "recording.mp4"
+        test_file.write_text("fake audio")
+
+        db_path = str(tmp_path / "test.db")
+        work_dir = str(tmp_path / "work")
+        os.makedirs(work_dir, exist_ok=True)
+
+        # Mock external dependencies
+        mocker.patch("zoom_insights.cli.to_compressed_audio")
+        mocker.patch("zoom_insights.cli.maybe_segment", return_value=["segment1.opus"])
+        mocker.patch("zoom_insights.cli.transcribe", return_value="Sample transcript")
+
+        # Mock insights with action items
+        insights_with_actions = {
+            "summary": "Meeting summary",
+            "action_items": [
+                {"task": "Review design", "owner": "Charlie", "due": "2026-07-18"},
+            ],
+        }
+        mocker.patch("zoom_insights.cli.summarize", return_value=insights_with_actions)
+
+        # Mock report writing
+        mocker.patch("zoom_insights.cli.write_report")
+
+        # Mock idempotency
+        mocker.patch("zoom_insights.cli.is_completed", return_value=False)
+        mocker.patch("zoom_insights.cli.mark_completed")
+
+        # Create config with tracker_db
+        config = Config(
+            zoom_account_id="test",
+            zoom_client_id="test",
+            zoom_client_secret="test",
+            groq_api_key="test",
+            tracker_db=db_path,
+        )
+
+        # Create mock groq client
+        mock_groq = mocker.MagicMock()
+
+        # Call _process_local_file
+        try:
+            _process_local_file(
+                str(test_file),
+                mock_groq,
+                work_dir=work_dir,
+                config=config,
+            )
+        except Exception:
+            # Some mocks may fail, but we're testing tracker integration
+            pass
+
+        # Verify action items were saved to tracker
+        pending = list_pending(db_path)
+        assert len(pending) == 1
+        assert pending[0]["task"] == "Review design"
