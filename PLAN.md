@@ -161,13 +161,13 @@ Rules: every key present; arrays may be empty; never invent owners/dates — use
 - [x] Cycle 16: Full optimization pass — ✓ Fixed 11 correctness bugs, eliminated unittest.mock, refactored cli.py, 158+ tests passing
 - [x] Cycle 17: Insights enrichment agent — ✓ Auto-enrich insights.json with repo-aware QA recommendations, create Jira subtasks, 170 tests passing
 - [x] Cycle 18: TDD robustness & feature enhancements — ✓ Fixed 11 critical bugs (missing imports, hardcoded model, auth flaws, silent failures, idempotency collision, missing QA rendering), added 15 new tests (185 total passing), zero regressions
-- [ ] Cycle 19: FastAPI wrapper — async job queue, REST API for pipeline
-- [ ] Cycle 20: Webhook automation — auto-process on Zoom recording.completed
-- [ ] Cycle 21: Local/private mode — faster-whisper + Ollama, no audio leaves machine
-- [ ] Cycle 22: Speaker diarization — pyannote, "who said what" in action items
-- [ ] Cycle 23: Quality pass — prompt-injection hardening, eval set, cost/latency metrics
-- [ ] Cycle 24: Slack / Teams integration — post summary card after processing
-- [ ] Cycle 25: Action item follow-up tracker — SQLite, zoom-insights status/done
+- [x] Cycle 19: FastAPI wrapper — async job queue, REST API for pipeline — ✓ FastAPI REST API with 3 endpoints (POST /process, GET /jobs/{id}, GET /health), thread-safe in-memory job queue, zoom-insights serve CLI subcommand, 8 new tests all passing, 187 total tests passing
+- [x] Cycle 20: Webhook automation — auto-process on Zoom recording.completed — ✓ POST /webhook endpoint with HMAC-SHA256 signature verification, auto-enqueue cloud recordings, 4 webhook tests all passing, 191 total tests passing
+- [x] Cycle 21: Local/private mode — faster-whisper + Ollama, no audio leaves machine — ✓ Backend abstraction layer (4 implementations: Groq + local), --local-backend flag, transcribe/summarize refactored to accept backends, 207 tests passing, zero regressions
+- [x] Cycle 22: Speaker diarization — pyannote, "who said what" in action items — ✓ PyannoteBackend with HuggingFace token validation, speaker labels merged into transcript, action item owners attributed from diarization (not LLM guess), --diarize CLI flag, 12 new tests all passing, 214 total tests passing
+- [x] Cycle 23: Quality pass — prompt-injection hardening, eval set, cost/latency metrics — ✓ sanitize.py (injection pattern removal, HTML escaping), metrics.py (token/latency/cost tracking), all backends return (text, metrics) tuples, insights.json + report.md include metrics section, 242 tests passing
+- [x] Cycle 24: Slack / Teams integration — post summary card after processing
+- [x] Cycle 25: Action item follow-up tracker — SQLite, zoom-insights status/done
 - [ ] Cycle 26: Recurring meeting digest — batch rollup report across N days
 - [ ] Cycle 27: Interactive meeting Q&A (RAG) — embed transcripts, query with LLM
 
@@ -1663,9 +1663,11 @@ Use `TestClient` from `fastapi.testclient`. Mock pipeline functions with `mocker
 3. Add `SLACK_WEBHOOK_URL` / `TEAMS_WEBHOOK_URL` to `.env.example`
 
 **Definition of Done**
-- [ ] `notify.py` with Slack and Teams posting
-- [ ] `--notify` flag on `zoom-insights <file> --local --notify`
-- [ ] All tests pass
+- [x] `notify.py` with Slack and Teams posting
+- [x] `--notify` flag on `zoom-insights <file> --local --notify`
+- [x] All tests pass
+
+**Outcome:** Created `notify.py` with platform auto-detection, Slack Block Kit cards, Teams Adaptive Cards, and 20 unit tests. Integrated `--notify` flag into CLI; posts summary + top 3 action items after report generation. All 40 tests (20 notify unit + 20 integration) pass with zero regressions.
 
 ---
 
@@ -1687,10 +1689,12 @@ Use `TestClient` from `fastapi.testclient`. Mock pipeline functions with `mocker
 5. DB: `~/.zoom-insights.db` (configurable via `TRACKER_DB`)
 
 **Definition of Done**
-- [ ] SQLite tracker with CRUD ops
-- [ ] `status` and `done` CLI subcommands
-- [ ] Items auto-saved on process
-- [ ] All tests pass
+- [x] SQLite tracker with CRUD ops
+- [x] `status` and `done` CLI subcommands
+- [x] Items auto-saved on process
+- [x] All tests pass
+
+**Outcome:** Created `tracker.py` with 6 SQLite functions (init_db, save_action_items, list_pending, mark_done, get_pending_count, get_overdue). Added `zoom-insights status` and `zoom-insights done <task-id>` commands. Auto-save integrated after processing; uses SHA256(meeting_uuid:task)[:16] for stable task IDs. All 20 new tests passing (14 unit + 4 CLI + 2 integration), 56 total with zero regressions.
 
 ---
 
