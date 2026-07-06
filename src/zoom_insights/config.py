@@ -21,6 +21,13 @@ class Config:
     jira_api_token: str = ""
     jira_project_key: str = ""
     claude_api_key: str = ""
+    zoom_webhook_secret_token: str = ""
+    ollama_url: str = "http://localhost:11434"
+    use_local_backend: bool = False
+    huggingface_token: str = ""
+    slack_webhook_url: str = ""
+    teams_webhook_url: str = ""
+    tracker_db: str = ""
 
     def validate(self) -> None:
         """Validate that all required fields are set; raise ValueError if any are missing."""
@@ -55,6 +62,13 @@ def load_config() -> Config:
         jira_api_token=os.getenv("JIRA_API_TOKEN", ""),
         jira_project_key=os.getenv("JIRA_PROJECT_KEY", ""),
         claude_api_key=os.getenv("CLAUDE_API_KEY", ""),
+        zoom_webhook_secret_token=os.getenv("ZOOM_WEBHOOK_SECRET_TOKEN", ""),
+        ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
+        use_local_backend=os.getenv("USE_LOCAL_BACKEND", "false").lower() == "true",
+        huggingface_token=os.getenv("HUGGINGFACE_TOKEN", ""),
+        slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL", ""),
+        teams_webhook_url=os.getenv("TEAMS_WEBHOOK_URL", ""),
+        tracker_db=os.getenv("TRACKER_DB", os.path.expanduser("~/.zoom-insights.db")),
     )
 
     config.validate()
