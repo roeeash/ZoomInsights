@@ -96,7 +96,90 @@ export GROQ_API_KEY="your_groq_api_key"
 
 No Zoom credentials needed!
 
+#### Optional Features
+
+**Local Backend (fully private, no API calls):**
+```bash
+# Install Ollama from https://ollama.ai
+ollama pull mistral
+
+# In .env:
+OLLAMA_URL=http://localhost:11434
+```
+
+**Speaker Diarization (identify speakers):**
+```bash
+# Get HuggingFace token from https://huggingface.co/settings/tokens
+# In .env:
+HUGGINGFACE_TOKEN=hf_xxxxx
+```
+
+**Slack/Teams Notifications:**
+```bash
+# In .env (optional):
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+TEAMS_WEBHOOK_URL=https://outlook.webhook.office.com/webhookb2/YOUR/URL
+```
+
+**Action Item Tracker (SQLite):**
+```bash
+# In .env (optional):
+TRACKER_DB=~/.zoom-insights.db
+```
+
+**Zoom Webhook Automation:**
+```bash
+# In .env (if using webhook):
+ZOOM_WEBHOOK_SECRET_TOKEN=your_zoom_webhook_secret
+```
+
+**Claude API (for QA enrichment):**
+```bash
+# In .env (if auto-enriching insights):
+CLAUDE_API_KEY=sk-xxxxx
+```
+
 ## Usage
+
+### API Server Mode (FastAPI)
+
+Run as a REST API server for async processing and webhook automation:
+
+```bash
+zoom-insights serve --port 8000
+```
+
+This starts a FastAPI server with:
+- `POST /process` — Submit a meeting UUID or local file path for async processing
+- `GET /jobs/{job_id}` — Check job status and retrieve results
+- `GET /health` — Health check endpoint
+- `POST /webhook` — Zoom webhook receiver (HMAC-SHA256 signature verification)
+
+**Example: Submit a job**
+```bash
+curl -X POST http://localhost:8000/process \
+  -H "Content-Type: application/json" \
+  -d '{"action": "0", "local": false}'
+```
+
+**Example: Check job status**
+```bash
+curl http://localhost:8000/jobs/job-uuid-here
+```
+
+The API automatically processes recordings in the background and stores results in `output/`.
+
+### Webhook Automation (Zoom Integration)
+
+Configure Zoom to notify your server when recordings complete:
+
+1. Set up your FastAPI server (see API Server Mode above)
+2. Go to Zoom Marketplace → Your Apps → Event Subscriptions
+3. Add webhook endpoint: `https://your-server.com/webhook`
+4. Subscribe to `recording.completed` event
+5. Add your `ZOOM_WEBHOOK_SECRET_TOKEN` to `.env`
+
+The server automatically downloads and processes recordings as soon as they're available.
 
 ### Option 1: Process from Zoom Cloud (requires Pro+ account)
 
@@ -168,7 +251,162 @@ zoom-insights ~/Zoom_Recordings/meeting_2024_12_15.m4a --local --title "Team Sta
 zoom-insights ./recording.mp4 --local
 ```
 
-### Option 3: Automatic Enrichment with QA Recommendations (optional)
+### Option 2b: Local Backend Mode (Fully Private - No API Calls)
+
+Process recordings entirely on your machine without sending audio to Groq:
+
+```bash
+# Requires: faster-whisper (transcription) + Ollama (LLM)
+zoom-insights /path/to/recording.mp4 --local --local-backend
+
+# Or with Zoom Cloud recordings
+zoom-insights 0 --local-backend
+```
+
+This uses:
+- **faster-whisper** — Local speech-to-text (CPU or GPU)
+- **Ollama** — Local LLM inference
+
+**Setup:**
+```bash
+# Install Ollama from https://ollama.ai
+ollama pull mistral  # or your preferred model
+
+# Set Ollama URL in .env
+OLLAMA_URL=http://localhost:11434
+```
+
+No API keys needed; complete privacy.
+
+### Option 2c: Speaker Diarization (Who Said What)
+
+Add speaker identification to action items and transcript:
+
+```bash
+zoom-insights /path/to/recording.mp4 --local --diarize
+```
+
+Or with Zoom Cloud:
+```bash
+zoom-insights 0 --diarize
+```
+
+**Requirements:**
+- HuggingFace account (free tier works)
+- HuggingFace token (get from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens))
+- Add to `.env`: `HUGGINGFACE_TOKEN=hf_xxxxx`
+
+**Features:**
+- Identifies speakers in the recording
+- Labels action items with speaker names (e.g., "Alice — Finalize budget docs")
+- Includes speaker labels in transcript
+
+### Option 2d: Post Notifications to Slack/Teams
+
+Automatically send a summary card to Slack or Teams after processing:
+
+```bash
+# Slack webhook
+zoom-insights /path/to/recording.mp4 --local \
+  --notify "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Teams webhook
+zoom-insights 0 \
+  --notify "https://outlook.webhook.office.com/webhookb2/YOUR/URL"
+```
+
+The tool auto-detects the platform (Slack vs Teams) and sends:
+- Meeting summary
+- Top 3 action items
+- Link to full report
+
+**Setup Slack webhook:**
+1. Go to your Slack workspace → Settings → Apps
+2. Search for "Incoming Webhooks"
+3. Create new webhook for your channel
+4. Copy the webhook URL
+
+**Setup Teams webhook:**
+1. In Microsoft Teams, go to your channel
+2. Click ⋯ (More options) → Connectors
+3. Search "Incoming Webhook"
+4. Create new webhook
+5. Copy the webhook URL
+
+### Option 3: Action Item Tracker (SQLite)
+
+Track action items across multiple meetings with completion status:
+
+```bash
+# View all pending action items
+zoom-insights status
+
+# Mark an item complete
+zoom-insights done <task-id>
+```
+
+**Features:**
+- Auto-saves action items after each processing
+- Groups by: overdue, upcoming, no due date
+- Tracks creation date and completion date
+- Configurable database location (default: `~/.zoom-insights.db`)
+
+**Configuration:**
+```bash
+# In .env (optional)
+TRACKER_DB=~/.zoom-insights.db
+```
+
+**Output example:**
+```
+Pending Action Items (5 total)
+================================
+
+OVERDUE (1 items):
+- [a1b2c3d4] (Alice) Finalize budget docs (due: 2026-07-01)
+
+UPCOMING (3 items):
+- [e5f6g7h8] (Bob) Schedule kickoff (due: 2026-07-10)
+- [i9j0k1l2] (Carol) Review market analysis (due: 2026-07-15)
+- [m3n4o5p6] (Unassigned) Update wiki (due: 2026-07-20)
+
+NO DUE DATE (1 items):
+- [q7r8s9t0] (Alice) Follow up on Q4 metrics
+```
+
+### Option 4: Processing Metrics and Cost Tracking
+
+View cost estimates and performance metrics for your processing:
+
+```bash
+zoom-insights /path/to/recording.mp4 --local --debug
+```
+
+The output now includes:
+- **Tokens used**: Input and output tokens for transcription and LLM
+- **Latency**: Time spent at each stage
+- **Estimated cost**: Cost breakdown by API call (Groq pricing)
+
+**Sample metrics output:**
+```
+Processing Metrics
+==================
+Stage: Transcription
+  Tokens (input): 45,320
+  Latency: 42.3 seconds
+  Cost: $0.08
+
+Stage: Summarization
+  Tokens (input): 8,450 | (output): 1,200
+  Latency: 5.2 seconds
+  Cost: $0.00
+
+Total estimated cost: $0.08
+```
+
+Metrics are also saved to `insights.json` for tracking.
+
+### Option 5: Automatic Enrichment with QA Recommendations (optional)
 
 **Enrichment is automatic!** When you pass an `insights.json` file to the CLI, it automatically enriches it with repository-aware QA recommendations if `CLAUDE_API_KEY` is set:
 
@@ -192,7 +430,7 @@ The enriched insights are better for creating Jira tickets that include concrete
 
 **Note:** Enrichment is optional. If `CLAUDE_API_KEY` is not set, the insights file is left as-is. Just use `zoom-insights output/<meeting>/insights.json` and the system will enrich it automatically if possible.
 
-### Option 4: Export to Jira (optional)
+### Option 6: Export to Jira (optional)
 
 After processing a meeting (and optionally enriching it), export action items as Jira tickets:
 
@@ -209,15 +447,55 @@ This creates one Task ticket per action item with:
 
 Requires Jira Cloud credentials in `.env` (see [Jira Integration](#jira-integration) section).
 
+### Combining Features
+
+Here are some powerful combinations:
+
+```bash
+# Local file + diarization + speaker-attributed action items
+zoom-insights ~/Downloads/meeting.mp4 --local --diarize
+
+# Process + auto-enrich + export to Jira + notify Slack
+zoom-insights 0 --jira \
+  --notify "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Fully private: local backend + no external APIs
+zoom-insights ~/recording.mp4 --local --local-backend --notify "YOUR_SLACK_WEBHOOK"
+
+# Track action items + view status later
+zoom-insights 0 --local
+# ... later ...
+zoom-insights status
+zoom-insights done <task-id>
+
+# View processing metrics and costs
+zoom-insights /path/to/recording.mp4 --local --debug
+```
+
 ### Enable debug logging
 
 ```bash
 zoom-insights 0 --debug
+# Shows: retry attempts, token usage, latency, estimated costs
+
 # or with local files:
 zoom-insights /path/to/recording.mp4 --local --debug
+
 # or with Jira export:
 zoom-insights jira --insights output/<meeting>/insights.json --debug
+
+# or with tracker:
+zoom-insights status --debug
 ```
+
+## Processing Modes
+
+| Mode | Input | Privacy | Speed | Cost |
+|------|-------|---------|-------|------|
+| **Zoom Cloud** | Zoom Recording URL | Medium (audio → Groq) | Fast | Low (~$0.01-0.05) |
+| **Local File** | MP4/M4A on disk | Medium (audio → Groq) | Fast | Low (~$0.01-0.05) |
+| **Local Backend** | MP4/M4A on disk | High (fully local) | Slow (CPU) | Free |
+| **API Server** | Remote HTTP | Depends on config | Async | Depends on config |
 
 ## Output
 
@@ -227,7 +505,10 @@ For a meeting titled "Q4 Planning", creates:
 output/Q4_Planning/
 ├── report.md          # Markdown report (human-readable)
 ├── insights.json      # Structured JSON (machine-readable)
-└── transcript.txt     # Full transcript
+├── transcript.txt     # Full transcript
+└── # Enhanced outputs (optional):
+    ├── speaker_labels # (if --diarize: speaker names + timestamps)
+    └── metrics        # (in insights.json: tokens, latency, cost)
 ```
 
 ### Sample report.md
@@ -275,13 +556,43 @@ Discussed Q4 strategy, budget allocation, and timeline. Approved $2M spend.
       "due": "2024-12-20"
     },
     {
-      "owner": null,
+      "owner": "Bob",
       "task": "Review analysis",
       "due": null
     }
   ],
   "open_questions": ["Overseas hiring?"],
-  "notable_quotes": ["We need to move fast."]
+  "notable_quotes": ["We need to move fast."],
+  
+  "metrics": {
+    "transcription": {
+      "tokens_in": 45320,
+      "latency_seconds": 42.3,
+      "estimated_cost_usd": 0.08
+    },
+    "summarization": {
+      "tokens_in": 8450,
+      "tokens_out": 1200,
+      "latency_seconds": 5.2,
+      "estimated_cost_usd": 0.00
+    },
+    "total_estimated_cost_usd": 0.08
+  },
+
+  "qa_recommendations": {
+    "test_scenarios": [
+      "Verify budget allocation across departments",
+      "Test approval workflow for Q4 spending"
+    ],
+    "features_to_add": [
+      "Budget dashboard for real-time spending",
+      "Automated approval escalation"
+    ],
+    "edge_cases_to_cover": [
+      "Emergency spending requests over limit",
+      "Multi-currency budget handling"
+    ]
+  }
 }
 ```
 
@@ -367,14 +678,25 @@ JIRA_PROJECT_KEY=PROJ
 After processing a meeting (which creates `output/<meeting>/insights.json`):
 
 ```bash
+# Auto-enrich with QA recommendations, then export to Jira
+zoom-insights output/<meeting>/insights.json
 zoom-insights jira --insights output/<meeting>/insights.json
+```
+
+Or combine both in one command with `--jira` flag:
+```bash
+zoom-insights /path/to/recording.mp4 --local --jira
 ```
 
 This command:
 1. Reads the structured insights from the JSON file
-2. Extracts all action items with owners and due dates
-3. Creates one Jira ticket per action item
-4. Links tickets back to the original meeting context
+2. Auto-enriches with repository-aware QA recommendations (if `CLAUDE_API_KEY` set)
+3. Extracts all action items with owners and due dates
+4. Creates one Jira ticket per action item with:
+   - QA recommendations as subtasks (if enriched)
+   - Meeting context and key points
+   - Speaker attribution (if diarization enabled)
+5. Links tickets back to the original meeting context
 
 Output:
 ```
@@ -533,6 +855,7 @@ Zoom Cloud Recording API
 
 | Module | Responsibility |
 |--------|---|
+| **Core Pipeline** | |
 | `config.py` | Environment loading + validation |
 | `zoom_client.py` | OAuth, list/download recordings |
 | `audio.py` | ffmpeg compression, segmentation |
@@ -541,21 +864,58 @@ Zoom Cloud Recording API
 | `report.py` | Write markdown + JSON + text files |
 | `retry.py` | Exponential backoff for 429/timeout |
 | `idempotency.py` | Track processed UUIDs |
-| `cli.py` | Full orchestration + argument parsing |
+| **Backend Abstraction** | |
+| `backends.py` | Abstract backend interfaces + implementations (Groq, faster-whisper, Ollama) |
+| `diarization.py` | Speaker identification (PyannoteBackend, LocalDiarizationBackend) |
+| `transcript_merge.py` | Merge diarization segments with transcript |
+| **Enhancement & Export** | |
+| `enrich_insights.py` | Auto-enrich with repo-aware QA recommendations |
+| `jira_export.py` | Create Jira tickets from action items |
+| `notify.py` | Post to Slack/Teams webhooks |
+| `sanitize.py` | Remove injection patterns, sanitize input |
+| `metrics.py` | Token/latency/cost tracking |
+| **Tracking & APIs** | |
+| `tracker.py` | SQLite action item persistence (CRUD, filtering, sorting) |
+| `api.py` | FastAPI REST endpoints (POST /process, GET /jobs/{id}, POST /webhook) |
+| **CLI & Entry** | |
+| `cli.py` | Full orchestration + argument parsing + subcommands |
 
 ## Testing
 
-Run the full test suite (125+ tests, all mocked):
+Run the full test suite (240+ tests, all mocked, no external API calls):
 
 ```bash
 pytest -q
 # or with coverage:
 pytest --cov=src/zoom_insights tests/
+# Expected: 240+ passed
 ```
 
-Run integration test:
+Run specific test modules:
 ```bash
+# Core pipeline tests
+pytest tests/test_transcribe.py tests/test_insights.py tests/test_report.py -v
+
+# Backend tests
+pytest tests/test_backends.py tests/test_diarization.py -v
+
+# API and integration tests
+pytest tests/test_api.py tests/test_integration.py -v
+
+# Action item tracker tests
+pytest tests/test_tracker.py tests/test_cli.py -v
+
+# Integration tests (end-to-end)
 pytest tests/test_integration.py -v
+```
+
+Test markers:
+```bash
+# Run only unit tests (fast)
+pytest -m unit -q
+
+# Run slow tests (e2e, integration)
+pytest -m integration -v
 ```
 
 ## Development
@@ -567,13 +927,20 @@ pytest tests/test_integration.py -v
 - No `print` in library code (use `logging`)
 - Mocked tests only (no real API calls)
 
-### Next steps (post-MVP)
+### Completed Features (Cycles 19-25)
 
-- **FastAPI wrapper**: `POST /process {uuid}` → 202 + async job
-- **Webhook automation**: Subscribe to `recording.completed`
-- **Local/private mode**: `faster-whisper` + Ollama backend
-- **Speaker diarization**: `pyannote` → "who said what"
-- **Eval dashboard**: Cost, latency, quality metrics
+✅ **Cycle 19: FastAPI wrapper** — `POST /process`, `GET /jobs/{id}`, `zoom-insights serve`
+✅ **Cycle 20: Webhook automation** — `POST /webhook` with HMAC verification, auto-process on `recording.completed`
+✅ **Cycle 21: Local/private mode** — `--local-backend` flag (faster-whisper + Ollama, no API calls)
+✅ **Cycle 22: Speaker diarization** — `--diarize` flag (pyannote.audio, speaker attribution to action items)
+✅ **Cycle 23: Quality pass** — Metrics tracking (tokens, latency, cost), sanitization, backend abstraction
+✅ **Cycle 24: Slack/Teams integration** — `--notify` flag, auto-detects platform, posts summary cards
+✅ **Cycle 25: Action item tracker** — SQLite DB, `zoom-insights status` / `done`, auto-save on process
+
+### Next steps (post-Cycle 25)
+
+- **Cycle 26: Recurring meeting digest** — Batch process N days, rollup report across meetings
+- **Cycle 27: Interactive meeting Q&A (RAG)** — Embed transcripts, semantic search with LLM
 
 ## Privacy Note
 
