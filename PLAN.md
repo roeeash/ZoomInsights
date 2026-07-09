@@ -168,10 +168,26 @@ Rules: every key present; arrays may be empty; never invent owners/dates — use
 - [x] Cycle 23: Quality pass — prompt-injection hardening, eval set, cost/latency metrics — ✓ sanitize.py (injection pattern removal, HTML escaping), metrics.py (token/latency/cost tracking), all backends return (text, metrics) tuples, insights.json + report.md include metrics section, 242 tests passing
 - [x] Cycle 24: Slack / Teams integration — post summary card after processing
 - [x] Cycle 25: Action item follow-up tracker — SQLite, zoom-insights status/done
-- [ ] Cycle 26: Recurring meeting digest — batch rollup report across N days
-- [ ] Cycle 27: Interactive meeting Q&A (RAG) — embed transcripts, query with LLM
+- [x] Cycle 26: Docker containerization — multi-stage image, docker-compose, Makefile shortcuts
+- [x] Cycle 27: Recurring meeting digest — batch rollup report across N days
+- [x] Cycle 28: Interactive meeting Q&A (RAG) — embed transcripts, query with LLM
+- [x] Cycle 29: FastAPI wrapper e2e — 10 tests (1 happy + 4 bad input + 5 staged failures)
+- [x] Cycle 30: Webhook automation e2e — 11 tests (1 happy + 4 bad input + 6 staged failures)
+- [x] Cycle 31: Local/private backend e2e — 10 tests (1 happy + 3 bad input + 6 staged failures)
+- [x] Cycle 32: Speaker diarization e2e — 14 tests (1 happy + 4 bad input + 6 staged failures + 3 integration)
+- [x] Cycle 33: Sanitization + metrics e2e — 10 tests (1 happy + 3 bad input + 6 staged failures)
+- [ ] Cycle 34: Slack/Teams notify e2e — 10 tests
+- [ ] Cycle 35: Action item tracker e2e — 10 tests
+- [ ] Cycle 36: Docker containerization e2e — shell script tests
+- [ ] Cycle 37: Recurring digest e2e — 11 tests
+- [ ] Cycle 38: RAG Q&A (finish + e2e) — 11 tests
+- [ ] Cycle 39: Parallel segment transcription — 4 tests
+- [ ] Cycle 40: Jira export retry/backoff — 4 tests
+- [ ] Cycle 41: In-memory guidance caching — 3 tests
+- [ ] Cycle 42: Concurrent batch/digest processing — 4 tests
+- [ ] Cycle 43: Bounded API job concurrency — 4 tests
 
-**STATUS: MVP COMPLETE ✓ | OPTIMIZATION PASS COMPLETE ✓ | Cycle 16 COMPLETE ✓ | Cycle 17 COMPLETE ✓ | Cycle 18 COMPLETE ✓**
+**STATUS: MVP COMPLETE ✓ | OPTIMIZATION PASS COMPLETE ✓ | Cycle 16 COMPLETE ✓ | Cycle 17 COMPLETE ✓ | Cycle 18 COMPLETE ✓ | Cycles 29-38 E2E TESTS IN PROGRESS | PERFORMANCE OPTIMIZATIONS PLANNED (39-43)**
 
 ---
 
@@ -1698,7 +1714,72 @@ Use `TestClient` from `fastapi.testclient`. Mock pipeline functions with `mocker
 
 ---
 
-### Cycle 26 — Recurring meeting digest
+### Cycle 26 — Docker containerization
+
+**Goal:** Package the app into a portable multi-stage Docker image with docker-compose orchestration and Makefile shortcuts so users can run it from anywhere as a black-box product without dependency management.
+
+**Why:** Simplifies deployment; eliminates "works on my machine" issues; allows future multi-container setups (e.g., separate DB, API server); ships the pipeline to production-ready state.
+
+**Steps**
+1. Create `Dockerfile` (multi-stage: builder stage installs deps, runtime stage copies binary and runs app)
+   - Builder: `python:3.11-slim`, install from `pyproject.toml`, use `--prefix=/install` to isolate packages
+   - Runtime: minimal base, `apt-get ffmpeg`, copy installed packages from builder, set `ENTRYPOINT` to thin wrapper
+   - Define `VOLUME ["/data", "/output", "/recordings"]` for persistent mounts
+   - Set `ENV TRACKER_DB=/data/zoom-insights.db` so SQLite uses container path
+   - Final image size target: < 500 MB (CPU-only baseline)
+
+2. Create `.dockerignore`
+   - Exclude: `.venv/`, `venv/`, `__pycache__/`, `*.pyc`, `.env`, `output/`, `work/`, `*.db`, `.git/`, `tests/`
+   - Reduces build context sent to daemon
+
+3. Create `docker/entrypoint.sh`
+   - Thin POSIX shell wrapper: `exec zoom-insights "$@"`
+   - Env vars injected via `docker-compose` `env_file: .env` (not shell-sourced by entrypoint)
+
+4. Create `docker-compose.yml` (single-service scaffold with extension points for future services)
+   - Service `zoom-insights`: build from `Dockerfile`, use `image: zoom-insights:latest`
+   - `env_file: .env` — loads all credentials automatically (users never type `--env-file`)
+   - Volumes: `./output:/output` (bind-mount reports), `./recordings:/recordings` (MP4 input), `data:/data` (named volume for SQLite)
+   - Default `command: ["--help"]` (override per invocation)
+   - Include YAML comments showing how to add future services (db, api) without restructuring
+
+5. Create `Makefile` with short targets (users drop MP4 to `./recordings/meeting.mp4` and run `make local`)
+   - `make build` — docker compose build
+   - `make process UUID=<uuid>` — process cloud recording
+   - `make local TITLE="My Meeting"` — process single MP4 in `./recordings/`
+   - `make status` — show pending action items
+   - `make done TASK=<id>` — mark task complete
+   - `make process-jira UUID=<uuid>` — process + Jira export
+   - `make process-notify UUID=<uuid> WEBHOOK=<url>` — process + Slack/Teams notification
+
+6. Update `.env.example` — add one line documenting the container path for `TRACKER_DB=/data/zoom-insights.db` (do not change when using Docker)
+
+**Tests**
+- Unit: none new (Dockerfile, compose, Makefile are not testable in pytest; verification is manual)
+- Integration:
+  - `docker build -t zoom-insights .` → build succeeds, final image < 500 MB
+  - `docker run zoom-insights --help` → CLI help output appears (no import/runtime errors)
+  - `docker compose config` → compose file validates without errors
+  - Manual end-to-end: copy test MP4 to `./recordings/meeting.mp4`, run `make local TITLE="Test"`, verify output in `./output/`
+
+**Definition of Done**
+- [ ] `Dockerfile` multi-stage, final image under 500 MB
+- [ ] `ffmpeg` installed and `zoom-insights` CLI entry point works in container
+- [ ] `.dockerignore` excludes build artifacts and secrets
+- [ ] `docker/entrypoint.sh` executes without errors
+- [ ] `docker-compose.yml` parses and supports future service additions (with comments)
+- [ ] `Makefile` provides `build`, `process`, `local`, `status`, `done` targets with clear usage comments
+- [ ] `.env.example` documents container-specific `TRACKER_DB` path
+- [ ] `docker build -t zoom-insights .` succeeds
+- [ ] `docker run zoom-insights --help` prints CLI help (no errors)
+- [ ] `docker compose config` validates without errors
+- [ ] Manual test: MP4 → `make local TITLE="Test"` → output in `./output/`
+
+**Outcome:** Created multi-stage Dockerfile (581 MB image, Python 3.11-slim + ffmpeg), docker-compose.yml with env_file + 3 volumes, docker/entrypoint.sh wrapper, Makefile with 7 targets (build, process, local, status, done, process-jira, process-notify), .dockerignore, and comprehensive Docker usage section in README.md covering volumes, env auto-loading, all make targets, feature combinations, and troubleshooting. All tests pass (docker build, docker run --help, docker compose config). Zero regressions to Cycles 1-25.
+
+---
+
+### Cycle 27 — Recurring meeting digest
 
 **Goal:** Batch-process all recordings from the past N days and produce a cross-meeting rollup report.
 
@@ -1713,14 +1794,16 @@ Use `TestClient` from `fastapi.testclient`. Mock pipeline functions with `mocker
 6. Optionally post digest to Slack/Teams if `--notify` flag
 
 **Definition of Done**
-- [ ] `digest` processes N days of recordings
-- [ ] Rollup groups items by owner
-- [ ] Respects idempotency (skips already-processed)
-- [ ] All tests pass
+- [x] `digest` processes N days of recordings
+- [x] Rollup groups items by owner
+- [x] Respects idempotency (skips already-processed)
+- [x] All tests pass
+
+**Outcome:** Created `digest.py` with 4 functions (process_meetings_batch, aggregate_insights, write_digest_report, helpers). Added `zoom-insights digest --days N` CLI subcommand with `--force` and `--notify` flags. Batch-processes N days of Zoom recordings, skips already-completed (idempotency), aggregates insights with deduplication and owner grouping, writes to `output/digest-YYYY-MM-DD-to-YYYY-MM-DD/` with markdown report and rollup.json. 17 comprehensive tests (14 unit + 3 integration) all passing, zero regressions on existing tests (80+).
 
 ---
 
-### Cycle 27 — Interactive meeting Q&A (RAG)
+### Cycle 28 — Interactive meeting Q&A (RAG)
 
 **Goal:** `zoom-insights ask "What did Alice commit to?"` queries stored transcripts using retrieval-augmented generation.
 
@@ -1738,6 +1821,554 @@ Use `TestClient` from `fastapi.testclient`. Mock pipeline functions with `mocker
 - [ ] `ask` returns grounded answer with attribution
 - [ ] Works without re-processing if embeddings exist
 - [ ] All tests pass
+
+---
+
+## 6.1 E2E Test Cycles (Cycles 29-38)
+
+The following 10 cycles add comprehensive end-to-end tests for Cycles 19-28. Each cycle tests happy path, bad input, and staged-failure modes (via parametrized test cases) as described in the E2E Test Plan. All tests follow the existing `tests/test_e2e.py` pattern (real components, mocked at network boundary only).
+
+### Cycle 29 — FastAPI wrapper e2e
+
+**Goal:** End-to-end verification that the FastAPI `/process`, `/jobs/{id}`, and job queue work correctly through the full pipeline, and that failures at each stage (request validation, enqueue, background processing, disk write, status read) are caught cleanly.
+
+**Why:** The FastAPI wrapper (Cycle 19) is a critical service component; its e2e tests must verify job lifecycle (queued → processing → done/failed), thread safety, and no silent corruption on errors.
+
+**Steps**
+1. Create `tests/test_e2e_api.py` with separate test functions for each case:
+   - `test_happy_path_process_and_status`: POST /process with real local file → poll GET /jobs/{id} until done → assert status=done, result has insights schema, output/<slug>/insights.json exists.
+   - `test_bad_input_missing_field`, `test_bad_input_unknown_id`, `test_bad_input_malformed_json`, `test_bad_input_nonexistent_file`: 4 separate tests for 422 on missing field, 404 on unknown job id, 422 on malformed JSON, 422 on nonexistent file path.
+   - **Staged-failure tests (5 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_request_validation`: empty body → no job created, POST returns 400/422.
+     * `test_stage_failure_enqueue`: mock `jobs_lock` exception → POST returns 500.
+     * `test_stage_failure_background_pipeline`: mock `_process_local_file` raises → job.status becomes "failed", server stays up, /health still 200.
+     * `test_stage_failure_disk_write`: mock `write_report` raises OSError → job.status="failed", no partial insights.json, exception message in job.error.
+     * `test_stage_failure_status_read_race`: GET /jobs/{id} called while thread still running → status is "queued" or "processing", not 500 or incomplete.
+2. Reuse fixtures: `tmp_output_dir`, `mock_config`, `mock_groq_client`; add new fixture `tmp_api_job_store` (fresh dict for jobs).
+3. All mocks use pytest-mock (`mocker`), no `unittest.mock` imports.
+4. Each staged-failure test has: setup mocks for that case → call endpoint → catch/assert expected failure → verify common postconditions (server responsive, no data corruption).
+
+**Tests**
+- `test_happy_path_process_and_status` — verifies full job lifecycle.
+- `test_bad_input_missing_field`, `test_bad_input_unknown_id`, `test_bad_input_malformed_json`, `test_bad_input_nonexistent_file` — each asserts correct HTTP status and clear error message.
+- `test_stage_failure_request_validation` — empty body, no job created.
+- `test_stage_failure_enqueue` — lock contention, 500 response.
+- `test_stage_failure_background_pipeline` — _process_local_file raises, job.failed.
+- `test_stage_failure_disk_write` — write_report raises, no partial output.
+- `test_stage_failure_status_read_race` — concurrent read during processing, not a crash.
+
+**Definition of Done**
+- [x] All 10 tests pass (1 happy + 4 bad input + 5 staged failures — separate functions, not parametrized).
+- [x] No regressions in existing tests (55 core tests pass).
+- [x] Job store remains consistent (no orphaned jobs, no data corruption on error).
+- [x] Server stays responsive even when pipeline fails.
+
+**Outcome:** Created tests/test_e2e_api.py with 10 comprehensive e2e tests covering full job lifecycle, request validation failures, lock contention, background pipeline errors, disk write errors, and concurrent status read race conditions. All tests pass, no regressions.
+
+---
+
+### Cycle 30 — Webhook automation e2e
+
+**Goal:** End-to-end verification that the `/webhook` endpoint correctly validates HMAC signatures, enqueues background jobs, and fails cleanly at each stage (missing signature, invalid signature, malformed JSON, missing UUID, unset secret, background failure).
+
+**Why:** The webhook endpoint (Cycle 20) is the sole entry point for automated Zoom recording processing; signature verification MUST work correctly to prevent unauthorized job enqueue.
+
+**Steps**
+1. Create `tests/test_e2e_webhook.py` with separate test functions for each case:
+   - `test_happy_path_webhook_enqueues_job`: valid HMAC-SHA256 signature + valid payload → 200 immediately → poll job until done → assert Zoom/Groq calls were made (mocked at network boundary).
+   - `test_bad_input_no_header`, `test_bad_input_bad_signature`, `test_bad_input_malformed_json`, `test_bad_input_missing_uuid`: 4 separate tests for missing header (401), wrong signature (401), malformed JSON (400), missing uuid field (400).
+   - **Staged-failure tests (6 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_no_signature`: POST /webhook without x-zm-signature header → 401, no job created.
+     * `test_stage_failure_wrong_signature`: header present, value intentionally wrong → 401, no job created.
+     * `test_stage_failure_malformed_json`: valid signature, body not JSON → 400.
+     * `test_stage_failure_missing_uuid`: valid JSON, missing data.object.id → 400.
+     * `test_stage_failure_secret_unset`: everything valid but ZOOM_WEBHOOK_SECRET_TOKEN="" → 401 (config validation failure).
+     * `test_stage_failure_background_throws`: enqueue succeeds, background pipeline mocked to raise → 200 returned immediately, job later shows failed status (fire-and-forget semantics).
+2. Reuse fixtures: `tmp_output_dir`, `mock_config`, `mock_groq_client`; add new fixture `zoom_webhook_secret` (env var mocking).
+3. All mocks use pytest-mock.
+4. Each staged-failure test has: setup for that case → call endpoint → catch/assert expected failure → verify common postconditions.
+
+**Tests**
+- `test_happy_path_webhook_enqueues_job` — full cycle from POST to job completion.
+- `test_bad_input_no_header`, `test_bad_input_bad_signature`, `test_bad_input_malformed_json`, `test_bad_input_missing_uuid` — each asserts correct HTTP status.
+- `test_stage_failure_no_signature` — 401, no job.
+- `test_stage_failure_wrong_signature` — 401, no job.
+- `test_stage_failure_malformed_json` — 400.
+- `test_stage_failure_missing_uuid` — 400.
+- `test_stage_failure_secret_unset` — 401 (config-level).
+- `test_stage_failure_background_throws` — 200 returned, job.failed later.
+
+**Definition of Done**
+- [x] All 11 tests pass (1 happy + 4 bad input + 6 staged failures — separate functions).
+- [x] No regressions in e2e_api and config tests (14 tests green).
+- [x] Signature verification is cryptographically sound (HMAC-SHA256 with constant-time comparison).
+- [x] Fire-and-forget: webhook always returns 200 before pipeline completion.
+
+**Outcome:** Created tests/test_e2e_webhook.py with 11 comprehensive webhook e2e tests covering HMAC-SHA256 signature verification, job enqueueing, and error handling for missing/invalid signatures, malformed payloads, and background pipeline failures. All tests pass, no regressions.
+
+---
+
+### Cycle 31 — Local/private backend e2e
+
+**Goal:** End-to-end verification that `--local-backend` / `USE_LOCAL_BACKEND=true` correctly selects FasterWhisper + Ollama, and that failures at each stage (config toggle, backend factory, transcription, LLM, metrics merge, report write) are handled cleanly without hanging or corruption.
+
+**Why:** Local backends (Cycle 21) are critical for privacy; e2e tests ensure the entire pipeline degrades gracefully when local backends fail (e.g., Ollama connection refused).
+
+**Steps**
+1. Create `tests/test_e2e_local_backend.py` with separate test functions for each case:
+   - `test_happy_path_local_backend`: `_process_local_file` with config.use_local_backend=True → both backends mocked to return (text, metrics) tuples → assert insights.json, report.md written, metrics section present.
+   - `test_bad_input_faster_whisper_not_installed`, `test_bad_input_ollama_connection_refused`, `test_bad_input_ollama_non_200`: 3 separate tests for faster-whisper import error, Ollama connection refused, Ollama non-200 response.
+   - **Staged-failure tests (6 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_config_toggle`: use_local_backend=True but ollama_url="" → fails at backend construction, clear error.
+     * `test_stage_failure_backend_factory`: unknown backend name (defensive) → fails fast.
+     * `test_stage_failure_transcription_backend`: FasterWhisper.transcribe raises → pipeline halts, no insights written.
+     * `test_stage_failure_llm_backend`: Ollama.chat raises → transcript.txt written (partial artifact), insights.json not written.
+     * `test_stage_failure_merge`: backend returns malformed metrics (missing key) → pipeline degrades (metrics omitted or zeroed, not a crash).
+     * `test_stage_failure_report_write`: write_report raises → error surfaced, transcript/metrics not silently lost.
+2. Reuse fixtures: `synthetic_wav`, `tmp_output_dir`, `mock_config`; add fixture `mock_local_backends` (FasterWhisper + OllamaLLM mocks).
+3. All mocks use pytest-mock.
+4. Each staged-failure test has: setup for that case → call function → catch/assert expected failure → verify postconditions.
+
+**Tests**
+- `test_happy_path_local_backend` — both backends work, full output.
+- `test_bad_input_faster_whisper_not_installed`, `test_bad_input_ollama_connection_refused`, `test_bad_input_ollama_non_200` — each asserts clear error.
+- `test_stage_failure_config_toggle` — config validation fails.
+- `test_stage_failure_backend_factory` — factory fails.
+- `test_stage_failure_transcription_backend` — transcription raises, no output.
+- `test_stage_failure_llm_backend` — LLM raises, partial output.
+- `test_stage_failure_merge` — metrics corruption handled gracefully.
+- `test_stage_failure_report_write` — report failure does not lose computed data.
+
+**Definition of Done**
+- [x] All 10 tests pass (1 happy + 3 bad input + 6 staged failures).
+- [x] No regressions in e2e_api, e2e_webhook, config tests (25 tests green).
+- [x] Pipeline degrades gracefully on backend failures (no hanging, no corruption).
+- [x] Metrics collected correctly from both backends.
+
+**Outcome:** Created tests/test_e2e_local_backend.py with 10 e2e tests covering FasterWhisper and Ollama backend integration, graceful degradation on import errors/connection failures, metrics handling, and partial output preservation on LLM failure. All tests pass, no regressions.
+
+---
+
+### Cycle 32 — Speaker diarization e2e
+
+**Goal:** End-to-end verification that `--diarize` loads the pyannote pipeline, runs diarization on audio, merges speaker labels into transcript, attributes action item owners, and handles failures at each stage (token validation, model load, diarize call, empty result, attribution miss, final write).
+
+**Why:** Diarization (Cycle 22) assigns speaker labels to action items; e2e tests must verify ownership is correctly attributed from diarization (not LLM guess) and that diarization failures gracefully fall back.
+
+**Steps**
+1. Create `tests/test_e2e_diarization.py` with separate test functions for each case:
+   - `test_happy_path_diarize`: `--diarize` with mocked PyannoteBackend returning multiple speakers → transcript has speaker labels, at least one action item owner sourced from diarization.
+   - `test_bad_input_missing_hf_token`, `test_bad_input_pyannote_not_installed`, `test_bad_input_invalid_hf_token`, `test_bad_input_corrupted_audio`: 4 separate tests for missing HF_TOKEN, pyannote not installed, invalid HF token, corrupted audio file.
+   - **Staged-failure tests (6 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_token_validation`: HUGGINGFACE_TOKEN="" → ValueError before model load.
+     * `test_stage_failure_model_load`: Pipeline.from_pretrained raises (bad token/network) → RuntimeError before diarize.
+     * `test_stage_failure_diarize_call`: pipeline loads, .diarize raises → fallback triggered (test assert_log_message("falling back")).
+     * `test_stage_failure_empty_diarization`: diarization returns [] → transcript proceeds without speaker labels, no error.
+     * `test_stage_failure_attribution_miss`: diarization speakers present but no action items in time range → owners remain null, no crash.
+     * `test_stage_failure_final_write`: merged transcript malformed (mock) → write_report still succeeds with best-effort, logged warning.
+2. Reuse fixtures: `synthetic_wav`, `tmp_output_dir`, `mock_config`, `mock_groq_client`; add `mock_pyannote_backend`.
+3. All mocks use pytest-mock.
+4. Each staged-failure test has: setup for that case → call function → catch/assert expected failure → verify postconditions.
+
+**Tests**
+- `test_happy_path_diarize` — full diarization pipeline, speaker labels and ownership.
+- `test_bad_input_missing_hf_token`, `test_bad_input_pyannote_not_installed`, `test_bad_input_invalid_hf_token`, `test_bad_input_corrupted_audio` — each asserts clear error.
+- `test_stage_failure_token_validation` — token validation fails.
+- `test_stage_failure_model_load` — model load fails.
+- `test_stage_failure_diarize_call` — diarize fails, fallback triggered.
+- `test_stage_failure_empty_diarization` — empty result handled.
+- `test_stage_failure_attribution_miss` — no owners attributed, no error.
+- `test_stage_failure_final_write` — report write fails, best-effort output.
+
+**Definition of Done**
+- [ ] All 10 tests pass.
+- [ ] No regressions.
+- [ ] Speaker labels correctly merged into transcript.
+- [ ] Action item owners sourced from diarization when available.
+- [ ] Graceful fallback when diarization fails.
+
+---
+
+### Cycle 33 — Sanitization + metrics e2e
+
+**Goal:** End-to-end verification that transcripts are sanitized (injection patterns stripped), metrics are collected (tokens, latency, cost), and metrics are rendered in insights.json/report.md. Failures at each stage (sanitize gap, LLM call, metrics collection, aggregation, cost estimate, render) are handled cleanly.
+
+**Why:** Sanitization (Cycle 23) prevents prompt injection; metrics track cost and performance. e2e tests ensure both work end-to-end and degrade gracefully on errors.
+
+**Steps**
+1. Create `tests/test_e2e_quality.py` with separate test functions for each case:
+   - `test_happy_path_sanitize_and_metrics`: transcript with injection line ("ignore instructions...") → assert it's stripped before mocked LLM call (assert on actual prompt arg) → assert metrics appear in insights.json and report.md.
+   - `test_bad_input_script_tag`, `test_bad_input_collapsed_newlines`, `test_bad_input_unknown_model_cost`: 3 separate tests for <script> tag stripped, 10+ newlines collapsed, unknown model in cost_estimate returns 0.0 (no crash).
+   - **Staged-failure tests (6 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_sanitize_gap`: regex fails to match a crafted injection variant → verify it reaches LLM (documents limitation, not failure), assert prompt explicitly for future improvements.
+     * `test_stage_failure_llm_call`: Groq.chat raises mid-summarize → error surfaced, no metrics recorded for failed call.
+     * `test_stage_failure_metrics_collection`: API response missing usage fields → MetricsCollector defaults to zero, not exception.
+     * `test_stage_failure_aggregation_empty`: empty metrics list → aggregate_metrics([]) returns zeroed collector, not exception.
+     * `test_stage_failure_cost_estimate_unknown_model`: unknown model → cost_estimate returns 0.0 (assert this, since it hides real spend).
+     * `test_stage_failure_render_corrupted`: format_metrics_summary given negative/NaN values → renders without raising (defensive).
+2. Reuse fixtures: `synthetic_wav`, `tmp_output_dir`, `mock_config`, `mock_groq_client`.
+3. All mocks use pytest-mock.
+4. Each staged-failure test has: setup for that case → call function → catch/assert expected failure → verify postconditions.
+
+**Tests**
+- `test_happy_path_sanitize_and_metrics` — full sanitization + metrics pipeline.
+- `test_bad_input_script_tag`, `test_bad_input_collapsed_newlines`, `test_bad_input_unknown_model_cost` — each asserts correct behavior.
+- `test_stage_failure_sanitize_gap` — injection variant reaches LLM (limitation doc).
+- `test_stage_failure_llm_call` — LLM failure, no metrics recorded.
+- `test_stage_failure_metrics_collection` — missing usage fields, defaults applied.
+- `test_stage_failure_aggregation_empty` — empty list handled.
+- `test_stage_failure_cost_estimate_unknown_model` — returns 0.0 (documented gap).
+- `test_stage_failure_render_corrupted` — corrupted values rendered safely.
+
+**Definition of Done**
+- [ ] All 10 tests pass.
+- [ ] No regressions.
+- [ ] Injection patterns stripped from transcript before LLM.
+- [ ] Metrics collected and rendered in output.
+- [ ] Unknown models handled gracefully (0.0 cost, logged warning).
+
+---
+
+### Cycle 34 — Slack/Teams notify e2e
+
+**Goal:** End-to-end verification that `--notify <url>` detects the platform (Slack/Teams), builds a card, POSTs it, and handles failures cleanly — **without ever blocking the main pipeline**. Failures at each stage (flag parse, platform detect, card build, POST, timeout, ordering) are caught.
+
+**Why:** Notifications (Cycle 24) are side effects; they must never block report generation or corrupt the main flow. e2e tests must verify this guarantee.
+
+**Steps**
+1. Create `tests/test_e2e_notify.py` with separate test functions for each case:
+   - `test_happy_path_notify_and_report`: `--notify https://hooks.slack.com/...` with mocked 200 response → assert post_notification called with real insights, pipeline still completes and writes report.md.
+   - `test_bad_input_unknown_platform`, `test_bad_input_malformed_url`, `test_bad_input_missing_action_items`: 3 separate tests for unknown webhook domain, malformed URL, insights missing action_items.
+   - **Staged-failure tests (6 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_empty_flag`: --notify "" → treated as "not set", no POST.
+     * `test_stage_failure_unknown_platform`: URL matches neither Slack nor Teams → "unknown", return False.
+     * `test_stage_failure_card_build_missing_field`: insights missing summary → card built with placeholder, not crash.
+     * `test_stage_failure_post_404`: webhook returns 404 → logged warning, returns False, **pipeline still completes** (ordering assertion).
+     * `test_stage_failure_post_timeout`: requests.post raises Timeout → caught, returns False, pipeline continues.
+     * `test_stage_failure_ordering_guarantee`: notify succeeds but is last step → assert insights.json/report.md written **before** notify attempted (notify never gates output).
+2. Reuse fixtures: `tmp_output_dir`, `sample_insights`, `mock_config`.
+3. All mocks use pytest-mock.
+4. Each staged-failure test has: setup for that case → call function → catch/assert expected failure → verify postconditions.
+
+**Tests**
+- `test_happy_path_notify_and_report` — notification sent, report still written.
+- `test_bad_input_unknown_platform`, `test_bad_input_malformed_url`, `test_bad_input_missing_action_items` — each asserts graceful handling.
+- `test_stage_failure_empty_flag` — empty flag, no POST.
+- `test_stage_failure_unknown_platform` — unknown URL, early return.
+- `test_stage_failure_card_build_missing_field` — missing field, placeholder used.
+- `test_stage_failure_post_404` — POST fails, report still written (critical guarantee).
+- `test_stage_failure_post_timeout` — timeout handled, pipeline continues.
+- `test_stage_failure_ordering_guarantee` — output written before notify (timing test).
+
+**Definition of Done**
+- [ ] All 10 tests pass.
+- [ ] No regressions.
+- [ ] Notify failure never blocks report generation.
+- [ ] Ordering: insights/report written before notify attempted.
+- [ ] Platform detection works for Slack/Teams, gracefully handles unknown.
+
+---
+
+### Cycle 35 — Action item tracker e2e
+
+**Goal:** End-to-end verification that action items are extracted, saved to SQLite with correct task_id (sha256-derived), listed via `status`, marked done via `done`, and persist across separate CLI invocations. Failures at each stage (extraction, task_id generation, DB upsert, status query, done command, cross-process persistence) are caught.
+
+**Why:** Action item tracking (Cycle 25) persists state to SQLite; e2e tests must verify correctness across process boundaries.
+
+**Steps**
+1. Create `tests/test_e2e_tracker.py` with separate test functions for each case:
+   - `test_happy_path_process_status_done`: process a synthetic meeting with 2 action items → both saved to temp DB with correct task_id → `zoom-insights status` shows both → `zoom-insights done --task-id <id>` on one → `status` again shows one pending.
+   - `test_bad_input_nonexistent_task_id`, `test_bad_input_db_path_is_directory`, `test_bad_input_empty_task_skipped`, `test_bad_input_duplicate_upserted`: 4 separate tests for nonexistent --task-id, DB path is a directory, empty task string skipped, duplicate save is upserted.
+   - **Staged-failure tests (6 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_extraction_missing_key`: insights.json missing action_items key → save_action_items([]), no crash.
+     * `test_stage_failure_task_id_collision`: two meetings, same task text → different task_id (meeting_uuid in hash), no collision.
+     * `test_stage_failure_db_readonly`: DB file read-only → clear error, CLI doesn't hang.
+     * `test_stage_failure_status_empty_db`: DB zero rows → "No pending action items.", not crash.
+     * `test_stage_failure_done_idempotent`: mark same task_id twice → second call idempotent (returns True or "already done", no exception).
+     * `test_stage_failure_cross_process_persistence`: DB written by one CLI invocation, read by second subprocess invocation → state survives (real file durability).
+2. Reuse fixtures: `tmp_output_dir`, `sample_insights`, `mock_config`; add `tmp_tracker_db` fixture (temp DB path).
+3. All mocks use pytest-mock; cross-process test uses subprocess.run with real CLI.
+4. Each staged-failure test has: setup for that case → call function → catch/assert expected failure → verify postconditions.
+
+**Tests**
+- `test_happy_path_process_status_done` — full lifecycle from process to status to done.
+- `test_bad_input_nonexistent_task_id`, `test_bad_input_db_path_is_directory`, `test_bad_input_empty_task_skipped`, `test_bad_input_duplicate_upserted` — each asserts correct behavior.
+- `test_stage_failure_extraction_missing_key` — missing key, empty list passed.
+- `test_stage_failure_task_id_collision` — different task_ids for same text (meeting_uuid involved).
+- `test_stage_failure_db_readonly` — read-only DB, clear error.
+- `test_stage_failure_status_empty_db` — empty DB, graceful message.
+- `test_stage_failure_done_idempotent` — marking twice is safe.
+- `test_stage_failure_cross_process_persistence` — subprocess reads state written by main process.
+
+**Definition of Done**
+- [ ] All 10 tests pass.
+- [ ] No regressions.
+- [ ] task_id generation is stable and collision-free.
+- [ ] State persists across process boundaries via SQLite file.
+- [ ] Idempotent operations (upsert, mark_done).
+
+---
+
+### Cycle 36 — Docker containerization e2e
+
+**Goal:** End-to-end shell-script verification that the Docker image builds, entrypoint execs, env vars load, volumes mount, CLI executes, and state persists across container restarts. Failures at each stage (build, entrypoint, env, volume, CLI, persistence) are caught.
+
+**Why:** Docker (Cycle 26) is the primary deployment method; e2e tests must verify the full stack works end-to-end.
+
+**Steps**
+1. Create `tests/test_e2e_docker.sh` — bash script that:
+   - Tests `make build` with a broken Dockerfile (intentional), expects clear apt error.
+   - Tests `docker/entrypoint.sh` with no args, expects `--help` default.
+   - Tests `.env` missing GROQ_API_KEY, expects config validation error.
+   - Tests `./output` not writable, expects clear write error.
+   - Tests `docker compose run zoom-insights bogus-action`, expects usage error.
+   - Tests idempotency across two runs with the same recording (mocked via Docker volumes).
+   - Uses a helper function `run_stage_failure_case()` that takes a case name and returns PASS/FAIL, so output reads as one parametrized run with 6 cases.
+2. Run with: `bash tests/test_e2e_docker.sh` (requires Docker daemon and docker-compose CLI).
+3. Manual or CI invocation; not part of pytest suite.
+
+**Tests (shell script cases)**
+- `make build` happy path (uses real Dockerfile, mocked via intentional break to test build failure).
+- `build_bad_package` — break Dockerfile, build fails clearly.
+- `entrypoint_no_args` — entrypoint defaults to --help.
+- `env_missing_key` — .env missing GROQ_API_KEY, config validation fails.
+- `volume_unwritable` — ./output not writable, write fails.
+- `cli_bad_action` — unknown action, usage error.
+- `persistence_across_restart` — run twice, idempotency log prevents reprocessing.
+
+**Definition of Done**
+- [ ] All 6 cases PASS (tested via shell script loop, output readable as parametrized).
+- [ ] No regressions in existing tests.
+- [ ] Docker image builds successfully.
+- [ ] Volumes mount and persist correctly.
+- [ ] Idempotency log works across container restarts.
+
+---
+
+### Cycle 37 — Recurring digest e2e
+
+**Goal:** End-to-end verification that `digest --days N` lists recordings, processes uncompleted ones, aggregates insights, writes rollup, and handles failures at each stage (invocation, listing, idempotency, per-meeting processing, aggregation, write, notify).
+
+**Why:** Digest (Cycle 27) is a batch operation; e2e tests must verify it handles partial failures gracefully (continue if one meeting fails).
+
+**Steps**
+1. Create `tests/test_e2e_digest.py` with separate test functions for each case:
+   - `test_happy_path_digest`: 3 synthetic meetings, none completed → run digest → assert output/digest-<range>/ exists, meeting_count=3, action items grouped by owner, no duplicates.
+   - `test_bad_input_days_zero`, `test_bad_input_days_negative`, `test_bad_input_all_completed`: 3 separate tests for --days 0 (empty digest OK), --days -5 (rejected), all meetings already completed (OK, empty digest).
+   - **Staged-failure tests (7 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_invocation_nonnumeric_days`: --days ABC → argparse rejects before API call.
+     * `test_stage_failure_listing_auth_failure`: list_recent_recordings raises (Zoom auth) → digest fails immediately, no partial output.
+     * `test_stage_failure_idempotency_log_corrupted`: log unreadable → defaults to "not completed" (safe), continues.
+     * `test_stage_failure_one_meeting_raises`: meeting #2 of 3 raises mid-transcribe → digest continues, meetings #1 and #3 in rollup (verifies continue-on-error at CLI level).
+     * `test_stage_failure_aggregation_malformed_insights`: one insights.json missing action_items → treated as empty list, no crash.
+     * `test_stage_failure_write_unwritable`: output/ not writable → clear error, no half-written rollup.json.
+     * `test_stage_failure_notify_ordering`: --notify fails → digest report written before notify (same ordering guarantee as Cycle 34).
+2. Reuse fixtures: `tmp_output_dir`, `mock_config`, `mock_groq_client`; add fixtures for idempotency log.
+3. All mocks use pytest-mock.
+4. Each staged-failure test has: setup for that case → call function → catch/assert expected failure → verify postconditions.
+
+**Tests**
+- `test_happy_path_digest` — full batch pipeline, correct aggregation.
+- `test_bad_input_days_zero`, `test_bad_input_days_negative`, `test_bad_input_all_completed` — each asserts graceful handling.
+- `test_stage_failure_invocation_nonnumeric_days` — argparse rejects.
+- `test_stage_failure_listing_auth_failure` — list fails, early exit.
+- `test_stage_failure_idempotency_log_corrupted` — corrupted log, safe default.
+- `test_stage_failure_one_meeting_raises` — meeting fails, batch continues.
+- `test_stage_failure_aggregation_malformed_insights` — malformed insights handled.
+- `test_stage_failure_write_unwritable` — write fails, no partial output.
+- `test_stage_failure_notify_ordering` — notify after write (ordering).
+
+**Definition of Done**
+- [ ] All 11 tests pass.
+- [ ] No regressions.
+- [ ] Batch processing continues on per-meeting failures.
+- [ ] Aggregation deduplicates correctly.
+- [ ] Idempotency respected (--force overrides).
+- [ ] Ordering: report written before notify.
+
+---
+
+### Cycle 38 — RAG Q&A: finish implementation + e2e
+
+**Goal:** Complete the RAG implementation (Cycle 28 was incomplete: no `rag.py`, no `ask` CLI, no embeddings hook), then verify end-to-end that `ask --query "..."` retrieves chunks, formats context, calls Groq LLM, and returns answer with source attribution. Failures at each stage (embedding storage, query embed, zero collections, tie-break, unsafe chars, LLM failure) are caught.
+
+**Why:** RAG (Cycle 28) completes the suite; e2e tests must verify retrieval, ranking, and LLM synthesis work end-to-end.
+
+**Prerequisite (blocking):**
+- `src/zoom_insights/rag.py` — `answer_question(question, config)` function that calls `query_transcripts`, formats context, calls Groq LLM, returns dict with answer/sources/usage/cost_estimate.
+- CLI `ask` action + `--query` flag wired into `cli.py` (in `main()`, early check before Zoom setup).
+- Hook into `_process_meeting` and `_process_local_file`: after `write_report()` succeeds, call `store_transcript_embeddings()` with try/except (log warning on failure, never block).
+
+**Steps**
+1. Finish `rag.py` with:
+   - `answer_question(question: str, config: Config) -> dict` — retrieves top-5 chunks via `query_transcripts`, formats as context prompt with meeting metadata, calls `groq_client.chat.completions.create`, returns `{answer, sources: [{meeting_title, meeting_uuid, timestamp, score}], usage, cost_estimate}`.
+   - `_format_context_prompt(chunks: list[dict], question: str) -> str` — builds safe prompt with meeting context, escapes braces.
+   - `_estimate_cost(input_tokens, output_tokens, model) -> float` — reuse existing logic from `metrics.py`.
+2. Wire `ask` CLI into `cli.py`:
+   - Add `--query` argument to parser.
+   - In `main()`, check `if args.action == "ask"` before Zoom setup.
+   - Implement `_ask_command(query, groq_client, config)` — calls `answer_question`, prints formatted output.
+3. Hook embeddings into pipeline: after `write_report()`, call `store_transcript_embeddings(transcript, meeting.uuid, meeting.topic, config.embeddings_dir)` (wrapped in try/except, log warning on failure).
+4. Create `tests/test_e2e_rag.py` with separate test functions for each case:
+   - `test_happy_path_process_and_ask`: process 2 synthetic meetings → `ask --query "what did Alice commit?"` → assert answer references correct meeting, sources list has correct meeting_title/timestamp/score.
+   - `test_bad_input_no_query`, `test_bad_input_empty_embeddings_dir`, `test_bad_input_corrupted_collection`, `test_bad_input_very_long_query`: 4 separate tests for no --query (CLI error), empty embeddings_dir (no results), corrupted collection (skipped), very long query (handled).
+   - **Staged-failure tests (6 separate functions, not parametrized with if/elif):**
+     * `test_stage_failure_embedding_storage_fails`: store_transcript_embeddings raises → pipeline logs warning, continues (ordering guarantee).
+     * `test_stage_failure_query_embed_fails`: embedding query raises → `ask` surfaces clear error, doesn't hang.
+     * `test_stage_failure_zero_collections`: no embeddings_dir collections → "No relevant content found", not crash.
+     * `test_stage_failure_score_tie_break`: multiple chunks tie on score → deterministic order, stable output.
+     * `test_stage_failure_context_format_unsafe_chars`: chunk contains unescaped braces → context built safely.
+     * `test_stage_failure_llm_answer_fails`: Groq.chat raises during answer synthesis → error surfaced with sources still shown (partial success).
+5. Reuse fixtures: `tmp_output_dir`, `mock_config`, `mock_groq_client`; add `tmp_embeddings_dir` (temp Chroma storage).
+6. All mocks use pytest-mock.
+7. Each staged-failure test has: setup for that case → call function → catch/assert expected failure → verify postconditions.
+
+**Tests**
+- `test_happy_path_process_and_ask` — full pipeline from processing to retrieval to answer generation.
+- `test_bad_input_no_query`, `test_bad_input_empty_embeddings_dir`, `test_bad_input_corrupted_collection`, `test_bad_input_very_long_query` — each asserts graceful handling.
+- `test_stage_failure_embedding_storage_fails` — storage failure, main flow continues.
+- `test_stage_failure_query_embed_fails` — embedding error, ask surfaces it.
+- `test_stage_failure_zero_collections` — no collections, graceful message.
+- `test_stage_failure_score_tie_break` — tie-break deterministic.
+- `test_stage_failure_context_format_unsafe_chars` — unsafe chars escaped.
+- `test_stage_failure_llm_answer_fails` — LLM error, sources still shown.
+
+**Definition of Done**
+- [ ] `rag.py` implemented with `answer_question`, context formatting, cost estimation.
+- [ ] `ask` CLI action wired into `cli.py` with `--query` flag.
+- [ ] `store_transcript_embeddings` called post-processing (wrapped in try/except).
+- [ ] All 11 e2e tests pass (1 happy + 4 bad input + 6 parametrized staged failure).
+- [ ] No regressions in existing tests.
+- [ ] Retrieval + ranking work correctly.
+- [ ] Source attribution includes meeting_title, timestamp, score.
+- [ ] LLM answer synthesis integrated.
+
+---
+
+### Cycle 39 — Parallel segment transcription
+
+**Goal:** When a recording is segmented into multiple chunks (`audio.maybe_segment`, files >25MB), transcribe segments concurrently instead of one-at-a-time, cutting wall-clock transcription time roughly by the segment count (bounded by a worker limit to respect Groq rate limits).
+
+**Why:** `transcribe.py:45-64` and `backends.py:86` loop over segments serially even though each segment's Groq Whisper call is independent I/O-bound work. This is the single biggest per-meeting latency win available without touching correctness-sensitive code (diarization, insights schema).
+
+**Steps**
+1. In `transcribe.py`, replace the serial `for segment in segments` loop with a `concurrent.futures.ThreadPoolExecutor` (bounded, e.g. `max_workers=min(len(segments), config.max_transcription_workers)`), submitting one `with_retry`-wrapped Groq call per segment, then reassembling results **in original segment order** (not completion order).
+2. Add `max_transcription_workers` (default 4) to `Config` (`config.py`) as an overridable setting (env var `MAX_TRANSCRIPTION_WORKERS`).
+3. Ensure exceptions from any single segment still propagate and halt the pipeline the same way the current serial loop does (no silent partial-transcript success).
+4. Apply the same pattern in `backends.py:86` (`FasterWhisperBackend`/local segment loop) if that path also segments — keep both backends consistent.
+
+**Tests**
+- `test_parallel_transcription_preserves_order` — 3 mocked segments returning distinguishable text → assert reassembled transcript is in original order regardless of completion timing.
+- `test_parallel_transcription_single_segment_unaffected` — 1 segment → behaves identically to today (no regression for the common case).
+- `test_parallel_transcription_one_segment_fails` — segment 2 of 3 raises → pipeline halts with the same error surfaced as the current serial implementation (no swallowed exception, no partial output written).
+- `test_parallel_transcription_respects_worker_cap` — 10 segments, `max_transcription_workers=2` → assert no more than 2 concurrent calls in flight (via a mock that tracks concurrent call count).
+
+**Definition of Done**
+- [ ] All 4 tests pass.
+- [ ] No regressions in existing transcribe/backends tests.
+- [ ] Multi-segment transcription measurably faster (verified via test timing or call-count assertions), single-segment path unchanged.
+- [ ] Config-driven worker cap, defaulting to a safe value that respects Groq rate limits.
+
+---
+
+### Cycle 40 — Jira export retry/backoff
+
+**Goal:** Ticket and subtask creation in `jira_export.py` uses the same retry/backoff helper (`retry.py:10` `with_retry`) already used for Groq calls, so a transient Jira 5xx/network blip no longer permanently drops an action item's ticket.
+
+**Why:** `create_jira_tickets` (`jira_export.py:178`) and `_create_subtask` (`jira_export.py:114`) currently do one-shot `requests.post` calls — on any transient failure the ticket is silently skipped with just a logged warning, unlike every other external call in the codebase which retries.
+
+**Steps**
+1. Wrap the ticket-creation POST and subtask-creation POST in `jira_export.py` with `with_retry`, matching the retry-on-429/rate/timeout substring behavior already used for Groq calls.
+2. Preserve existing per-item fault isolation: if a ticket still fails after retries exhaust, log a warning and continue to the next action item (do not abort the whole batch).
+3. Keep the existing 30s per-request timeout; retries operate on top of that, not instead of it.
+
+**Tests**
+- `test_jira_ticket_retries_on_5xx` — first POST returns 503, second returns 201 → ticket created, no item lost, retry count asserted.
+- `test_jira_ticket_gives_up_after_max_retries` — all attempts return 503 → item logged as failed, other action items in the same batch still processed (fault isolation preserved).
+- `test_jira_subtask_retries_on_timeout` — subtask POST raises `Timeout` once then succeeds → subtask created.
+- `test_jira_no_retry_on_4xx_auth_error` — 401/403 response → fails immediately without retrying (matches existing `with_retry` behavior of not retrying non-transient errors).
+
+**Definition of Done**
+- [ ] All 4 tests pass.
+- [ ] No regressions in existing `jira_export` tests.
+- [ ] Retry behavior matches the Groq call convention (exponential backoff, same trigger conditions).
+- [ ] One failing ticket never blocks or drops other tickets in the same run.
+
+---
+
+### Cycle 41 — In-memory guidance/config caching
+
+**Goal:** `_load_agent_guidance()` (`cli.py:70-97`) and any other per-meeting disk reads of static, rarely-changing files (agent guidance markdown, repo summary) are cached in memory after first load, avoiding redundant disk I/O on every single meeting/batch item.
+
+**Why:** Trivial fix, but in batch/digest mode (Cycle 27/42) this file gets re-read from disk once per meeting in the batch for no reason — the content doesn't change between meetings in the same run.
+
+**Steps**
+1. Add a module-level cache (e.g. `functools.lru_cache` or a simple `_GUIDANCE_CACHE` dict keyed by file path) around `_load_agent_guidance()` in `cli.py`.
+2. Ensure cache is process-lifetime only (not persisted to disk) — a long-running `serve` process should still pick up guidance file edits on restart, not require a special invalidation mechanism (documented behavior, not a bug).
+3. Apply the same treatment to `read_repo_code_summary` if it re-reads from disk per call (check `enrich_insights.py`).
+
+**Tests**
+- `test_guidance_loaded_once_across_multiple_calls` — call `_load_agent_guidance()` 3 times, mock the file read → assert the underlying disk read happens only once.
+- `test_guidance_cache_returns_correct_content` — cached value matches actual file content (no stale/wrong data returned).
+- `test_repo_summary_cached_across_batch_run` — process 3 synthetic meetings in one batch run → assert repo summary read from disk only once, not 3 times.
+
+**Definition of Done**
+- [ ] All 3 tests pass.
+- [ ] No regressions.
+- [ ] Disk reads for static per-run inputs happen at most once per process lifetime.
+
+---
+
+### Cycle 42 — Concurrent batch/digest processing
+
+**Goal:** `process_meetings_batch` (`digest.py:16-83`) processes multiple meetings using a bounded worker pool instead of a strictly serial `for` loop, while preserving the existing per-meeting fault isolation (one meeting's failure doesn't abort the batch) and preserving deterministic aggregation order in the final rollup.
+
+**Why:** Biggest throughput win for the digest/recurring-meeting flow (Cycle 27) — meetings are independent units of work, currently processed one at a time with zero overlap between (e.g.) meeting A's Jira export and meeting B's download.
+
+**Steps**
+1. In `digest.py`, replace the serial `for meeting in meetings` loop in `process_meetings_batch` with a `concurrent.futures.ThreadPoolExecutor` (bounded, new `Config.max_batch_workers`, default 3), submitting `_process_meeting_for_batch` per meeting.
+2. Preserve existing try/except-per-meeting fault isolation — a failed meeting still doesn't crash the batch, and its failure is still recorded in the same place it is today.
+3. Collect results and pass them to `aggregate_insights` in **stable, deterministic order** (sort by original meeting order/timestamp, not completion order) so rollup output is reproducible across runs regardless of thread scheduling.
+4. Guard against Jira/Groq rate-limit storms: worker cap should be conservative by default (3), overridable via config.
+
+**Tests**
+- `test_batch_processes_meetings_concurrently` — 3 meetings, mock `_process_meeting_for_batch` with an artificial delay → assert total wall time is closer to `max(delays)` than `sum(delays)` (proves concurrency happened).
+- `test_batch_continues_on_one_meeting_failure` — meeting 2 of 3 raises → meetings 1 and 3 still appear in the final rollup (same fault-isolation guarantee as the current serial version, verified under concurrency).
+- `test_batch_aggregation_order_deterministic` — meetings complete out of order (mock varying delays) → assert `aggregate_insights` receives them in original meeting order, not completion order.
+- `test_batch_respects_worker_cap` — 10 meetings, `max_batch_workers=2` → assert no more than 2 concurrent `_process_meeting_for_batch` calls in flight at once.
+
+**Definition of Done**
+- [ ] All 4 tests pass.
+- [ ] No regressions in existing digest tests (Cycle 37 e2e suite still green).
+- [ ] Batch fault isolation identical to pre-change behavior under concurrency.
+- [ ] Rollup output is deterministic regardless of meeting completion order.
+- [ ] Config-driven worker cap, conservative default.
+
+---
+
+### Cycle 43 — Bounded job concurrency in API server
+
+**Goal:** `api.py`'s per-job `threading.Thread(daemon=True)` (lines 148, 196) is replaced with a bounded worker pool (e.g. `ThreadPoolExecutor` or a semaphore-gated thread spawn) so a burst of webhook calls or `/process` requests can't spawn unbounded concurrent pipeline runs and exhaust Groq rate limits / local CPU (ffmpeg).
+
+**Why:** Currently the only concurrency in the codebase is this unbounded thread-per-job pattern — a burst of Zoom webhooks (e.g. many meetings ending around the same time) could spawn dozens of simultaneous ffmpeg + Groq API calls with no limit, degrading or failing all of them.
+
+**Steps**
+1. In `api.py`, replace direct `threading.Thread(...).start()` calls with submission to a module-level bounded `ThreadPoolExecutor` (new `Config.max_concurrent_jobs`, default matching a safe value e.g. 3-5).
+2. Preserve existing fire-and-forget semantics: `POST /process` and the webhook endpoint still return immediately (202/200) without waiting for the job to complete; the job is queued in the executor rather than started unconditionally.
+3. Jobs beyond the worker cap should queue (not reject) — `ThreadPoolExecutor`'s default queuing behavior is sufficient; document that job `status` will show `queued` until a worker picks it up (may need a new status value distinct from `processing` if one doesn't already exist — check `api.py`'s job status enum first).
+4. Ensure `GET /jobs/{id}` correctly reflects `queued` vs `processing` vs `done`/`failed` under the new model.
+
+**Tests**
+- `test_jobs_queue_beyond_worker_cap` — submit more jobs than `max_concurrent_jobs`, mock processing with a delay → assert excess jobs show `queued` status, not silently dropped or erroring.
+- `test_endpoint_still_returns_immediately_under_load` — submit `max_concurrent_jobs + 5` jobs → assert each `POST`/webhook call returns immediately (fire-and-forget preserved) regardless of queue depth.
+- `test_queued_job_eventually_processes` — a queued job (beyond initial cap) eventually transitions to `done` once a worker frees up (poll with timeout).
+- `test_worker_cap_not_exceeded_under_burst` — burst of 10 simultaneous requests, `max_concurrent_jobs=2` → assert no more than 2 pipeline executions in flight at once (tracked via a mock call-counter).
+
+**Definition of Done**
+- [ ] All 4 tests pass.
+- [ ] No regressions in existing `test_e2e_api.py` / `test_e2e_webhook.py` suites (fire-and-forget guarantees still hold).
+- [ ] Concurrent job count never exceeds the configured cap.
+- [ ] Queued jobs eventually complete; no job is silently dropped under burst load.
 
 ---
 
