@@ -1,0 +1,15 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+output/
+work/
+*.db
+.git/
+tests/
+.gitignore
+.gitingore
+LOCAL_FILES_GUIDE.md
+PLAN.md
+README.md
