@@ -1,5 +1,6 @@
 """Insights enrichment with repository-aware QA recommendations."""
 
+import functools
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ from groq import Groq
 logger = logging.getLogger(__name__)
 
 
+@functools.lru_cache(maxsize=1)
 def read_repo_code_summary(repo_path: str) -> str:
     """Read Python files from repo and extract imports, function signatures.
 

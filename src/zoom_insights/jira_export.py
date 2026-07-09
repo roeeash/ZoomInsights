@@ -6,6 +6,8 @@ import logging
 from typing import Optional
 import requests
 
+from zoom_insights.retry import with_retry
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,6 +24,36 @@ def _build_auth_header(email: str, api_token: str) -> str:
     auth_str = f"{email}:{api_token}"
     encoded_auth = base64.b64encode(auth_str.encode()).decode()
     return f"Basic {encoded_auth}"
+
+
+def _post_with_jira_retry(endpoint: str, **kwargs) -> requests.Response:
+    """Make a POST request to Jira with retry on transient errors.
+
+    Raises exceptions on auth errors (non-transient) and 5xx server errors (transient),
+    which are handled by with_retry. Returns the response for all other status codes.
+
+    Args:
+        endpoint: Jira API endpoint URL
+        **kwargs: keyword arguments to pass to requests.post (json, headers, timeout, etc.)
+
+    Returns:
+        Response object from requests.post
+
+    Raises:
+        RuntimeError: on 401/403 auth errors or 5xx server errors
+    """
+    response = requests.post(endpoint, **kwargs)
+
+    # Auth errors are non-transient — fail immediately without retrying
+    if response.status_code in (401, 403):
+        raise RuntimeError(f"Jira authentication failed ({response.status_code})")
+
+    # 5xx errors are transient — with_retry will retry on these
+    if response.status_code >= 500:
+        raise RuntimeError(f"Jira server error: HTTP {response.status_code}")
+
+    # Return response for all other status codes (including 4xx non-auth errors)
+    return response
 
 
 def build_ticket_payload(action_item: dict, key_points: list[str], project_key: str, qa_recommendations: Optional[dict] = None) -> dict:
@@ -160,7 +192,7 @@ def _create_subtask(
 
     try:
         endpoint = f"{jira_url}/rest/api/3/issue"
-        response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
+        response = with_retry(_post_with_jira_retry, endpoint, json=payload, headers=headers, timeout=30)
 
         if response.status_code == 201:
             subtask_key = response.json().get("key")
@@ -242,9 +274,9 @@ def create_jira_tickets(
             continue
 
         try:
-            # Build and POST ticket with QA recommendations
+            # Build and POST ticket with QA recommendations (with retry on transient errors)
             payload = build_ticket_payload(action_item, key_points, project_key, qa_recommendations)
-            response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
+            response = with_retry(_post_with_jira_retry, endpoint, json=payload, headers=headers, timeout=30)
 
             if response.status_code == 201:
                 # Success
@@ -270,14 +302,9 @@ def create_jira_tickets(
                         if subtask_key:
                             print(f"  Created subtask: {subtask_key}")
 
-            elif response.status_code in (401, 403):
-                # Authentication/authorization failure — fatal
-                raise RuntimeError(
-                    f"Jira authentication failed ({response.status_code}): "
-                    "check JIRA_EMAIL and JIRA_API_TOKEN"
-                )
             else:
-                # Other errors (400, 500, etc.) — warn and skip this ticket
+                # Other errors (400, etc.) — warn and skip this ticket
+                # (5xx errors were retried and failed, auth errors raise exception)
                 try:
                     error_text = response.text
                 except Exception:

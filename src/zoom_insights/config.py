@@ -28,6 +28,9 @@ class Config:
     slack_webhook_url: str = ""
     teams_webhook_url: str = ""
     tracker_db: str = ""
+    max_transcription_workers: int = 4
+    max_batch_workers: int = 3
+    max_concurrent_jobs: int = 4
 
     def validate(self) -> None:
         """Validate that all required fields are set; raise ValueError if any are missing."""
@@ -69,6 +72,9 @@ def load_config() -> Config:
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL", ""),
         teams_webhook_url=os.getenv("TEAMS_WEBHOOK_URL", ""),
         tracker_db=os.getenv("TRACKER_DB", os.path.expanduser("~/.zoom-insights.db")),
+        max_transcription_workers=int(os.getenv("MAX_TRANSCRIPTION_WORKERS", "4")),
+        max_batch_workers=int(os.getenv("MAX_BATCH_WORKERS", "3")),
+        max_concurrent_jobs=int(os.getenv("MAX_CONCURRENT_JOBS", "4")),
     )
 
     config.validate()

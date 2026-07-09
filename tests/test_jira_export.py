@@ -538,3 +538,156 @@ class TestCreateJiraTickets:
         assert "Caching layer" in description_text
         assert "Edge Cases to Cover:" in description_text
         assert "Network timeouts" in description_text
+
+    def test_jira_ticket_retries_on_5xx(self, mocker):
+        """Test that ticket creation retries on 503 then succeeds on second attempt."""
+        insights = {
+            "action_items": [
+                {"task": "Task 1", "owner": "Alice", "due": None}
+            ],
+            "key_points": ["Point 1"]
+        }
+
+        # Mock preflight
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
+
+        # Mock sleep to speed up tests
+        mocker.patch("zoom_insights.retry.time.sleep")
+
+        # Mock POST: first call returns 503, second call returns 201
+        responses = [
+            mocker.MagicMock(status_code=503, text="Service Unavailable"),
+            mocker.MagicMock(status_code=201, json=lambda: {"key": "PROJ-1"})
+        ]
+        response_iter = iter(responses)
+
+        def side_effect(*args, **kwargs):
+            return next(response_iter)
+
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post", side_effect=side_effect)
+
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
+
+        # Ticket should be created despite initial 503
+        assert len(created_keys) == 1
+        assert "PROJ-1" in created_keys
+        # POST should have been called twice (retry on 503)
+        assert mock_post.call_count == 2
+
+    def test_jira_ticket_gives_up_after_max_retries(self, mocker):
+        """Test that ticket creation fails and continues to next item after max retries on 503."""
+        insights = {
+            "action_items": [
+                {"task": "Task 1", "owner": "Alice", "due": None},
+                {"task": "Task 2", "owner": "Bob", "due": None}
+            ],
+            "key_points": ["Point 1"]
+        }
+
+        # Mock preflight
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
+
+        # Mock sleep to speed up tests
+        mocker.patch("zoom_insights.retry.time.sleep")
+
+        # Mock POST: always return 503
+        mock_response = mocker.MagicMock(status_code=503, text="Service Unavailable")
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post", return_value=mock_response)
+
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
+
+        # First task should fail, second task should succeed
+        # Mock will always return 503, so both will fail
+        assert len(created_keys) == 0
+        # POST should have been called multiple times per task (retries)
+        # 6 attempts for task 1 + 6 attempts for task 2 = 12 calls
+        assert mock_post.call_count == 12
+
+    @pytest.mark.unit
+    def test_jira_subtask_retries_on_timeout(self, mocker):
+        """Test that subtask creation retries on Timeout exception then succeeds."""
+        from zoom_insights.jira_export import _create_subtask
+        import requests
+
+        # Mock sleep to speed up tests
+        mocker.patch("zoom_insights.retry.time.sleep")
+
+        # Mock requests.post to raise Timeout first, then succeed
+        timeout_exception = requests.exceptions.Timeout("Connection timeout")
+        mock_response = mocker.MagicMock(status_code=201, json=lambda: {"key": "PROJ-1-SUB"})
+
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise timeout_exception
+            return mock_response
+
+        mocker.patch("zoom_insights.jira_export.requests.post", side_effect=side_effect)
+
+        subtask_key = _create_subtask(
+            "PROJ-1",
+            "Test scenario",
+            "Test the scenario",
+            "https://test.atlassian.net",
+            "test@test.com",
+            "token",
+            "PROJ"
+        )
+
+        # Subtask should be created despite initial timeout
+        assert subtask_key == "PROJ-1-SUB"
+        # POST should have been called twice (retry on timeout)
+        assert call_count[0] == 2
+
+    def test_jira_no_retry_on_4xx_auth_error(self, mocker):
+        """Test that 401 auth error fails immediately without retrying."""
+        insights = {
+            "action_items": [
+                {"task": "Task 1", "owner": "Alice", "due": None}
+            ],
+            "key_points": ["Point 1"]
+        }
+
+        # Mock preflight to succeed
+        mock_get = mocker.MagicMock()
+        mock_get.status_code = 200
+        mocker.patch("zoom_insights.jira_export.requests.get", return_value=mock_get)
+
+        # Mock sleep to speed up tests (though it shouldn't be called)
+        mocker.patch("zoom_insights.retry.time.sleep")
+
+        # Mock POST to return 401
+        mock_response = mocker.MagicMock(status_code=401, text="Unauthorized")
+        mock_post = mocker.patch("zoom_insights.jira_export.requests.post", return_value=mock_response)
+
+        # Call create_jira_tickets - should fail immediately
+        created_keys = create_jira_tickets(
+            insights,
+            "https://test.atlassian.net",
+            "test@test.com",
+            "bad_token",
+            "PROJ"
+        )
+
+        # No tickets created
+        assert len(created_keys) == 0
+        # POST should have been called exactly once (no retries on 401)
+        assert mock_post.call_count == 1

@@ -4,6 +4,7 @@ import logging
 import requests
 from pathlib import Path
 from typing import Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from zoom_insights.retry import with_retry
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ def transcribe(
     files: Optional[list] = None,
     token: str = "",
     model: str = "whisper-large-v3-turbo",
+    max_workers: int = 4,
 ) -> str:
     """Transcribe one or more audio segments using Groq Whisper and concatenate.
 
@@ -28,6 +30,7 @@ def transcribe(
         files: List of RecordingFile objects (needed for VTT download).
         token: Zoom OAuth access token (needed for VTT download).
         model: Whisper model name to use.
+        max_workers: Maximum number of concurrent transcription workers (default: 4).
 
     Returns:
         Full transcript as a string.
@@ -40,9 +43,8 @@ def transcribe(
             return vtt_text
         logger.info("VTT transcript not available; falling back to Whisper")
 
-    transcript_parts = []
-
-    for path in paths:
+    def transcribe_segment(index: int, path: str) -> tuple[int, str]:
+        """Transcribe a single segment and return (index, text)."""
         logger.info(f"Transcribing {path}")
 
         with open(path, "rb") as audio_file:
@@ -60,9 +62,31 @@ def transcribe(
             # Handle object response with .text attribute
             text = getattr(response, "text", str(response))
 
-        transcript_parts.append(text)
         logger.debug(f"Segment transcribed: {len(text)} characters")
+        return index, text
 
+    # Use ThreadPoolExecutor to transcribe segments concurrently
+    transcript_dict = {}
+    max_concurrent_workers = max(1, min(len(paths), max_workers))
+
+    with ThreadPoolExecutor(max_workers=max_concurrent_workers) as executor:
+        # Submit all transcription tasks
+        futures = {
+            executor.submit(transcribe_segment, idx, path): idx
+            for idx, path in enumerate(paths)
+        }
+
+        # Collect results, preserving order and propagating exceptions
+        for future in as_completed(futures):
+            try:
+                idx, text = future.result()
+                transcript_dict[idx] = text
+            except Exception as e:
+                # Fail-fast: any segment exception halts the pipeline
+                raise e
+
+    # Reassemble transcript in original segment order
+    transcript_parts = [transcript_dict[i] for i in range(len(paths))]
     full_transcript = "\n".join(transcript_parts)
     logger.info(f"Full transcript: {len(full_transcript)} characters")
 

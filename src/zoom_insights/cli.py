@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import functools
 import json
 import logging
 import os
@@ -67,6 +68,7 @@ def _validate_jira_credentials(config: Config) -> None:
         raise RuntimeError(f"Error validating Jira credentials: {e}")
 
 
+@functools.lru_cache(maxsize=1)
 def _load_agent_guidance() -> str:
     """Load the client-facing automation engineer agent's guidance.
 
@@ -370,6 +372,7 @@ def _process_meeting(
         files=meeting.files,
         token=token,
         model=config.whisper_model,
+        max_workers=config.max_transcription_workers,
     )
     logger.info(f"Transcript: {len(transcript)} characters")
 
@@ -490,7 +493,7 @@ def _process_local_file(
 
     # Transcribe (no VTT for local files)
     logger.info("Stage 4: Transcribing audio with Groq Whisper...")
-    transcript = transcribe(segment_paths, groq_client, use_vtt=False, model=config.whisper_model)
+    transcript = transcribe(segment_paths, groq_client, use_vtt=False, model=config.whisper_model, max_workers=config.max_transcription_workers)
     logger.info(f"Transcript: {len(transcript)} characters")
 
     # Extract insights

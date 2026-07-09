@@ -202,3 +202,5 @@ def mock_groq_client(mocker, sample_insights):
     client.chat.completions.create.side_effect = [map_response, reduce_response]
 
     return client
+
+

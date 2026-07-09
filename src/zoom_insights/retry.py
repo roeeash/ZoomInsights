@@ -35,8 +35,8 @@ def with_retry(fn, *args, tries: int = 6, base_delay: int = 4, **kwargs) -> Any:
             msg = str(e).lower()
             is_last_try = i == tries - 1
 
-            # Only retry on rate limit / timeout errors
-            is_retryable = any(k in msg for k in ("429", "rate", "timeout"))
+            # Only retry on rate limit / timeout / 5xx server errors
+            is_retryable = any(k in msg for k in ("429", "rate", "timeout", "500", "502", "503", "504"))
 
             if is_last_try or not is_retryable:
                 raise
