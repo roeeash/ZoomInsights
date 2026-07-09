@@ -181,13 +181,13 @@ Rules: every key present; arrays may be empty; never invent owners/dates — use
 - [ ] Cycle 36: Docker containerization e2e — shell script tests
 - [ ] Cycle 37: Recurring digest e2e — 11 tests
 - [ ] Cycle 38: RAG Q&A (finish + e2e) — 11 tests
-- [ ] Cycle 39: Parallel segment transcription — 4 tests
-- [ ] Cycle 40: Jira export retry/backoff — 4 tests
-- [ ] Cycle 41: In-memory guidance caching — 3 tests
-- [ ] Cycle 42: Concurrent batch/digest processing — 4 tests
-- [ ] Cycle 43: Bounded API job concurrency — 4 tests
+- [x] Cycle 39: Parallel segment transcription — 4 tests
+- [x] Cycle 40: Jira export retry/backoff — 4 tests
+- [x] Cycle 41: In-memory guidance caching — 3 tests
+- [x] Cycle 42: Concurrent batch/digest processing — 4 tests
+- [x] Cycle 43: Bounded API job concurrency — 4 tests
 
-**STATUS: MVP COMPLETE ✓ | OPTIMIZATION PASS COMPLETE ✓ | Cycle 16 COMPLETE ✓ | Cycle 17 COMPLETE ✓ | Cycle 18 COMPLETE ✓ | Cycles 29-38 E2E TESTS IN PROGRESS | PERFORMANCE OPTIMIZATIONS PLANNED (39-43)**
+**STATUS: MVP COMPLETE ✓ | OPTIMIZATION PASS COMPLETE ✓ | Cycle 16 COMPLETE ✓ | Cycle 17 COMPLETE ✓ | Cycle 18 COMPLETE ✓ | Cycles 29-33 E2E TESTS COMPLETE ✓ | PERFORMANCE OPTIMIZATIONS 39-43 COMPLETE ✓**
 
 ---
 
@@ -2264,10 +2264,12 @@ The following 10 cycles add comprehensive end-to-end tests for Cycles 19-28. Eac
 - `test_parallel_transcription_respects_worker_cap` — 10 segments, `max_transcription_workers=2` → assert no more than 2 concurrent calls in flight (via a mock that tracks concurrent call count).
 
 **Definition of Done**
-- [ ] All 4 tests pass.
-- [ ] No regressions in existing transcribe/backends tests.
-- [ ] Multi-segment transcription measurably faster (verified via test timing or call-count assertions), single-segment path unchanged.
-- [ ] Config-driven worker cap, defaulting to a safe value that respects Groq rate limits.
+- [x] All 4 tests pass.
+- [x] No regressions in existing transcribe/backends tests.
+- [x] Multi-segment transcription measurably faster (verified via test timing or call-count assertions), single-segment path unchanged.
+- [x] Config-driven worker cap, defaulting to a safe value that respects Groq rate limits.
+
+**Outcome:** ThreadPoolExecutor-based parallel segment transcription with bounded worker pool (default 4, configurable via MAX_TRANSCRIPTION_WORKERS env var); 45 tests pass (no regressions).
 
 ---
 
@@ -2289,10 +2291,12 @@ The following 10 cycles add comprehensive end-to-end tests for Cycles 19-28. Eac
 - `test_jira_no_retry_on_4xx_auth_error` — 401/403 response → fails immediately without retrying (matches existing `with_retry` behavior of not retrying non-transient errors).
 
 **Definition of Done**
-- [ ] All 4 tests pass.
-- [ ] No regressions in existing `jira_export` tests.
-- [ ] Retry behavior matches the Groq call convention (exponential backoff, same trigger conditions).
-- [ ] One failing ticket never blocks or drops other tickets in the same run.
+- [x] All 4 tests pass.
+- [x] No regressions in existing `jira_export` tests.
+- [x] Retry behavior matches the Groq call convention (exponential backoff, same trigger conditions).
+- [x] One failing ticket never blocks or drops other tickets in the same run.
+
+**Outcome:** Jira ticket and subtask creation now use `with_retry()` helper for exponential backoff on transient errors (5xx, timeout); 24 tests pass (20 existing + 4 new); batch fault isolation preserved.
 
 ---
 
@@ -2313,9 +2317,11 @@ The following 10 cycles add comprehensive end-to-end tests for Cycles 19-28. Eac
 - `test_repo_summary_cached_across_batch_run` — process 3 synthetic meetings in one batch run → assert repo summary read from disk only once, not 3 times.
 
 **Definition of Done**
-- [ ] All 3 tests pass.
-- [ ] No regressions.
-- [ ] Disk reads for static per-run inputs happen at most once per process lifetime.
+- [x] All 3 tests pass.
+- [x] No regressions.
+- [x] Disk reads for static per-run inputs happen at most once per process lifetime.
+
+**Outcome:** `@functools.lru_cache` decorators applied to `_load_agent_guidance()` and `read_repo_code_summary()`; 5 caching tests pass (3 required + 2 bonus); batch digest processing now avoids redundant disk I/O.
 
 ---
 
@@ -2338,11 +2344,13 @@ The following 10 cycles add comprehensive end-to-end tests for Cycles 19-28. Eac
 - `test_batch_respects_worker_cap` — 10 meetings, `max_batch_workers=2` → assert no more than 2 concurrent `_process_meeting_for_batch` calls in flight at once.
 
 **Definition of Done**
-- [ ] All 4 tests pass.
-- [ ] No regressions in existing digest tests (Cycle 37 e2e suite still green).
-- [ ] Batch fault isolation identical to pre-change behavior under concurrency.
-- [ ] Rollup output is deterministic regardless of meeting completion order.
-- [ ] Config-driven worker cap, conservative default.
+- [x] All 4 tests pass.
+- [x] No regressions in existing digest tests (Cycle 37 e2e suite still green).
+- [x] Batch fault isolation identical to pre-change behavior under concurrency.
+- [x] Rollup output is deterministic regardless of meeting completion order.
+- [x] Config-driven worker cap, conservative default.
+
+**Outcome:** ThreadPoolExecutor-based concurrent batch processing with bounded worker pool (default 3, configurable via MAX_BATCH_WORKERS); deterministic output order preserved; 18 tests pass (14 existing + 4 new).
 
 ---
 
@@ -2365,10 +2373,12 @@ The following 10 cycles add comprehensive end-to-end tests for Cycles 19-28. Eac
 - `test_worker_cap_not_exceeded_under_burst` — burst of 10 simultaneous requests, `max_concurrent_jobs=2` → assert no more than 2 pipeline executions in flight at once (tracked via a mock call-counter).
 
 **Definition of Done**
-- [ ] All 4 tests pass.
-- [ ] No regressions in existing `test_e2e_api.py` / `test_e2e_webhook.py` suites (fire-and-forget guarantees still hold).
-- [ ] Concurrent job count never exceeds the configured cap.
-- [ ] Queued jobs eventually complete; no job is silently dropped under burst load.
+- [x] All 4 tests pass.
+- [x] No regressions in existing `test_e2e_api.py` / `test_e2e_webhook.py` suites (fire-and-forget guarantees still hold).
+- [x] Concurrent job count never exceeds the configured cap.
+- [x] Queued jobs eventually complete; no job is silently dropped under burst load.
+
+**Outcome:** ThreadPoolExecutor-based bounded job concurrency (default 4, configurable via MAX_CONCURRENT_JOBS); fire-and-forget semantics preserved; 18 tests pass (7 e2e_api + 4 concurrency + 7 webhook); no regressions.
 
 ---
 
