@@ -96,6 +96,200 @@ export GROQ_API_KEY="your_groq_api_key"
 
 No Zoom credentials needed!
 
+## Docker Containerization
+
+Process recordings in an isolated, reproducible environment using Docker.
+
+### Quick Start with Docker
+
+#### 1. Build the Docker image
+
+```bash
+cd zoom-insights
+make build
+```
+
+This creates a `zoom-insights:latest` image with all dependencies including ffmpeg.
+
+#### 2. Process a local recording
+
+```bash
+# Copy your MP4 to the recordings folder
+cp ~/Downloads/meeting.mp4 ./recordings/meeting.mp4
+
+# Run processing with a custom title
+make local TITLE="Q4 Planning Meeting"
+
+# Output appears in ./output/Q4_Planning_Meeting/
+# - report.md
+# - insights.json
+# - transcript.txt
+```
+
+#### 3. Process Zoom Cloud recordings
+
+```bash
+# Set up your .env (same as Installation section)
+cp .env.example .env
+# Edit .env with your Zoom and Groq credentials
+
+# Interactive selection — lists recent recordings and prompts you to choose
+make process
+
+# You'll see:
+#   Fetching recent recordings...
+#   1. 2024-01-15 - Q4 Planning
+#   2. 2024-01-14 - Team Standup
+#   Select recording number (1-2): 
+
+# Just enter the number and it processes automatically
+# Output in ./output/<meeting_title>/
+
+# Or bypass interactive mode by providing UUID directly
+make process UUID=a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6
+```
+
+#### 4. View action item tracker
+
+```bash
+# See pending items across all processed meetings
+make status
+
+# Mark an item complete
+make done TASK=a1b2c3d4
+```
+
+### Docker Volumes & Persistence
+
+The Docker setup uses three volume mounts:
+
+| Local Path | Container Path | Purpose |
+|-----------|-----------------|---------|
+| `./recordings/` | `/recordings` | **Input** — Copy MP4/M4A files here |
+| `./output/` | `/output` | **Output** — Reports, insights, transcripts saved here |
+| Named volume `data` | `/data` | **Persistence** — SQLite tracker DB, work state |
+
+**Example workflow:**
+
+```bash
+# 1. Place your file
+cp ~/Downloads/my_recording.mp4 ./recordings/meeting.mp4
+
+# 2. Process (Docker mounts volumes automatically)
+make local TITLE="My Meeting"
+
+# 3. Check output on your machine
+cat ./output/My_Meeting/report.md
+ls -la ./output/My_Meeting/
+```
+
+The `data` volume persists across container runs, so your action item tracker state is maintained.
+
+### All Make Targets
+
+```bash
+make build                              # Build Docker image
+make local TITLE="Meeting Title"        # Process local MP4: ./recordings/meeting.mp4 → ./output/
+make process                            # Interactive: list recent recordings, select one to process
+make process UUID=<uuid>                # Process Zoom Cloud recording by UUID (bypass interactive)
+make status                             # View pending action items (tracker)
+make done TASK=<task-id>                # Mark action item complete
+make process-jira                       # Interactive: select recording + export to Jira
+make process-jira UUID=<uuid>           # Process + export to Jira (bypass interactive)
+make process-notify WEBHOOK=<url>       # Interactive: select recording + Slack/Teams notification
+make process-notify UUID=<uuid> WEBHOOK=<url>  # Process + notify (bypass interactive)
+```
+
+### Environment File (docker-compose auto-loads)
+
+When running with `make`, `docker-compose` automatically reads your `.env` file. You don't need to pass `--env-file` manually.
+
+**Example .env:**
+```bash
+ZOOM_ACCOUNT_ID=your_id
+ZOOM_CLIENT_ID=your_client_id
+ZOOM_CLIENT_SECRET=your_secret
+GROQ_API_KEY=gsk_your_key_here
+TRACKER_DB=/data/zoom-insights.db
+```
+
+### Supported Input Formats
+
+Works with any ffmpeg-compatible format:
+- **Video**: MP4, MOV, MKV, AVI, WebM
+- **Audio**: M4A, MP3, WAV, OGG, FLAC
+
+### Example Output Structure
+
+After processing a meeting titled "Q4 Planning", your local `./output/` contains:
+
+```
+output/Q4_Planning/
+├── report.md              # Markdown (human-readable)
+├── insights.json          # JSON (machine-readable)
+├── transcript.txt         # Full transcript
+└── metrics.txt            # Token usage & cost estimates (if --debug)
+```
+
+**Sample report.md:**
+```markdown
+# Q4 Planning
+
+## Summary
+Discussed Q4 strategy, budget allocation, timeline. Approved $2M spend.
+
+## Key Points
+- Budget approved at $2M
+- Timeline: Oct-Dec 2024
+- Team expanded to 12 FTE
+
+## Decisions
+- Approved Q4 budget
+- Postponed feature X to Q1 2025
+
+## Action Items
+- **Alice** — Finalize budget docs (due: 2024-12-20)
+- **Bob** — Schedule kickoff (due: 2024-12-10)
+```
+
+### Combining Docker with Other Features
+
+```bash
+# Fully private: local backend + no external APIs
+make local TITLE="Private Meeting"     # Uses faster-whisper + Ollama locally
+
+# With speaker diarization (requires HUGGINGFACE_TOKEN in .env)
+docker compose run --rm zoom-insights /recordings/meeting.mp4 --local --diarize
+
+# Process + auto-enrich QA recommendations (requires CLAUDE_API_KEY)
+docker compose run --rm zoom-insights /recordings/meeting.mp4 --local
+
+# Process + export to Jira
+make process-jira UUID=meeting-uuid
+```
+
+All features (diarization, local backend, Jira export, Slack/Teams notifications) work identically inside Docker as they do locally.
+
+### Troubleshooting Docker
+
+**"docker: command not found"**
+- Install Docker Desktop: https://www.docker.com/products/docker-desktop
+- Then: `docker --version` to verify
+
+**"make: command not found"**
+- macOS: `brew install make`
+- Linux: `apt install make`
+- Or use `docker compose` commands directly (see Makefile for commands)
+
+**Build fails: "ffmpeg not found"**
+- This should not happen; Dockerfile installs ffmpeg via apt
+- Try: `docker compose build --no-cache`
+
+**Container exits immediately**
+- Check your recording file path: `ls -la ./recordings/`
+- Verify .env is readable: `cat .env`
+- Add `--debug` flag: `docker compose run --rm zoom-insights /recordings/meeting.mp4 --local --debug`
+
 #### Optional Features
 
 **Local Backend (fully private, no API calls):**
@@ -487,6 +681,34 @@ zoom-insights jira --insights output/<meeting>/insights.json --debug
 # or with tracker:
 zoom-insights status --debug
 ```
+
+### Performance Tuning (Optional)
+
+Optimize throughput and resource usage with environment variables in `.env`:
+
+```bash
+# Parallel segment transcription (default: 4 workers)
+# Speeds up large recordings by transcribing segments concurrently
+MAX_TRANSCRIPTION_WORKERS=4
+
+# Concurrent batch digest processing (default: 3 workers)
+# When processing multiple meetings, limits parallelism to avoid rate limits
+MAX_BATCH_WORKERS=3
+
+# Bounded API server concurrency (default: 4 jobs)
+# When using webhook/API mode, limits concurrent pipeline executions
+MAX_CONCURRENT_JOBS=4
+```
+
+**Impact:**
+- Increasing `MAX_TRANSCRIPTION_WORKERS` speeds up large recordings (>25MB) at the cost of higher Groq API rate usage
+- Increasing `MAX_BATCH_WORKERS` processes multiple meetings faster when running digest
+- Increasing `MAX_CONCURRENT_JOBS` allows more parallel webhook jobs but may exceed Groq rate limits
+
+**Recommendation:** Keep defaults (4, 3, 4) unless you:
+- Have many large recordings → increase `MAX_TRANSCRIPTION_WORKERS` to 6-8
+- Process many meetings in batch → increase `MAX_BATCH_WORKERS` to 5-10
+- Run high-traffic webhook server → monitor Groq rate limits before increasing `MAX_CONCURRENT_JOBS`
 
 ## Processing Modes
 
