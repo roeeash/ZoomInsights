@@ -26,6 +26,38 @@ def _build_auth_header(email: str, api_token: str) -> str:
     return f"Basic {encoded_auth}"
 
 
+def _render_bullet_section(header: str, items: list) -> list[dict]:
+    """Build ADF paragraph nodes for a bullet section (header + bullets).
+
+    Args:
+        header: Section header text (e.g., "Test Scenarios:")
+        items: List of items (strings or dicts with 'title'/'description' keys)
+
+    Returns:
+        List of ADF paragraph dicts (header + one bullet per item), or [] if items is empty/None
+    """
+    if not items:
+        return []
+
+    adf_content = [
+        {"type": "paragraph", "content": [{"type": "text", "text": header}]}
+    ]
+
+    for item in items:
+        # Extract text from dict items (use title, then description, then str() fallback)
+        if isinstance(item, dict):
+            item_text = item.get("title") or item.get("description") or str(item)
+        else:
+            item_text = item
+
+        adf_content.append({
+            "type": "paragraph",
+            "content": [{"type": "text", "text": f"  • {item_text}"}]
+        })
+
+    return adf_content
+
+
 def _post_with_jira_retry(endpoint: str, **kwargs) -> requests.Response:
     """Make a POST request to Jira with retry on transient errors.
 
@@ -98,33 +130,18 @@ def build_ticket_payload(action_item: dict, key_points: list[str], project_key: 
 
     # Add QA recommendations if available
     if qa_recommendations:
-        adf_content.append({"type": "paragraph", "content": [{"type": "text", "text": ""}]})
-        adf_content.append({"type": "paragraph", "content": [{"type": "text", "text": "QA Recommendations:"}]})
+        has_qa_content = any([
+            qa_recommendations.get("test_scenarios"),
+            qa_recommendations.get("features_to_add"),
+            qa_recommendations.get("edge_cases_to_cover"),
+        ])
 
-        if qa_recommendations.get("test_scenarios"):
-            adf_content.append({"type": "paragraph", "content": [{"type": "text", "text": "Test Scenarios:"}]})
-            for scenario in qa_recommendations.get("test_scenarios", []):
-                scenario_text = scenario if isinstance(scenario, str) else scenario.get("title", str(scenario))
-                adf_content.append({
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": f"  • {scenario_text}"}]
-                })
-
-        if qa_recommendations.get("features_to_add"):
-            adf_content.append({"type": "paragraph", "content": [{"type": "text", "text": "Features to Add:"}]})
-            for feature in qa_recommendations.get("features_to_add", []):
-                adf_content.append({
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": f"  • {feature}"}]
-                })
-
-        if qa_recommendations.get("edge_cases_to_cover"):
-            adf_content.append({"type": "paragraph", "content": [{"type": "text", "text": "Edge Cases to Cover:"}]})
-            for edge_case in qa_recommendations.get("edge_cases_to_cover", []):
-                adf_content.append({
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": f"  • {edge_case}"}]
-                })
+        if has_qa_content:
+            adf_content.append({"type": "paragraph", "content": [{"type": "text", "text": ""}]})
+            adf_content.append({"type": "paragraph", "content": [{"type": "text", "text": "QA Recommendations:"}]})
+            adf_content.extend(_render_bullet_section("Test Scenarios:", qa_recommendations.get("test_scenarios", [])))
+            adf_content.extend(_render_bullet_section("Features to Add:", qa_recommendations.get("features_to_add", [])))
+            adf_content.extend(_render_bullet_section("Edge Cases to Cover:", qa_recommendations.get("edge_cases_to_cover", [])))
 
     adf_description = {
         "type": "doc",
@@ -143,10 +160,42 @@ def build_ticket_payload(action_item: dict, key_points: list[str], project_key: 
     }
 
 
+def _build_subtask_description(scenario: str, qa_recommendations: Optional[dict]) -> dict:
+    """Build an ADF description for a test-scenario subtask with context.
+
+    Args:
+        scenario: Test scenario text (required)
+        qa_recommendations: Optional dict with 'edge_cases_to_cover', 'features_to_add'
+                           to include in subtask for reference
+
+    Returns:
+        Full ADF dict with {"type": "doc", "version": 1, "content": [...]}
+    """
+    adf_content = []
+
+    # Always include the test scenario section
+    if scenario:
+        adf_content.extend(_render_bullet_section("Test Scenario:", [scenario]))
+
+    # Add supporting context if qa_recommendations is provided
+    if qa_recommendations:
+        adf_content.extend(_render_bullet_section("Edge Cases to Consider:", qa_recommendations.get("edge_cases_to_cover", [])))
+        adf_content.extend(_render_bullet_section("Related Features:", qa_recommendations.get("features_to_add", [])))
+
+    # Return ADF document
+    return {
+        "type": "doc",
+        "version": 1,
+        "content": adf_content if adf_content else [
+            {"type": "paragraph", "content": [{"type": "text", "text": scenario}]}
+        ]
+    }
+
+
 def _create_subtask(
     parent_key: str,
     title: str,
-    description: str,
+    description_adf: dict,
     jira_url: str,
     email: str,
     api_token: str,
@@ -157,7 +206,7 @@ def _create_subtask(
     Args:
         parent_key: Parent ticket key (e.g., "PROJ-1")
         title: Subtask summary/title
-        description: Subtask description
+        description_adf: Pre-built ADF dict for subtask description
         jira_url: Jira Cloud instance URL
         email: Jira user email
         api_token: Jira API token
@@ -171,19 +220,10 @@ def _create_subtask(
         "Content-Type": "application/json"
     }
 
-    # Build ADF description
-    adf_description = {
-        "type": "doc",
-        "version": 1,
-        "content": [
-            {"type": "paragraph", "content": [{"type": "text", "text": description}]}
-        ]
-    }
-
     payload = {
         "fields": {
             "summary": title,
-            "description": adf_description,
+            "description": description_adf,
             "project": {"key": project_key},
             "issuetype": {"name": "Subtask"},
             "parent": {"key": parent_key},
@@ -290,10 +330,11 @@ def create_jira_tickets(
                 if qa_recommendations:
                     test_scenarios = qa_recommendations.get("test_scenarios", [])
                     for scenario in test_scenarios:
+                        description_adf = _build_subtask_description(scenario, qa_recommendations)
                         subtask_key = _create_subtask(
                             ticket_key,
                             f"Test: {scenario}",
-                            f"Test scenario: {scenario}",
+                            description_adf,
                             jira_url,
                             email,
                             api_token,
