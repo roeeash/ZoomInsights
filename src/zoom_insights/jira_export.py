@@ -263,7 +263,7 @@ def create_jira_tickets(
     """Create Jira tickets from insights action items.
 
     Args:
-        insights: dict with 'action_items' and 'key_points' keys (optional: 'qa_recommendations')
+        insights: dict with 'action_items' and 'key_points' keys (optional: 'action_item_qa' for per-item QA)
         jira_url: Jira Cloud instance URL (e.g., "https://mycompany.atlassian.net")
         email: Jira user email for authentication
         api_token: Jira API token for authentication
@@ -283,7 +283,7 @@ def create_jira_tickets(
 
     action_items = insights["action_items"]
     key_points = insights["key_points"]
-    qa_recommendations = insights.get("qa_recommendations", {})
+    action_item_qa = insights.get("action_item_qa", [])
 
     # Build headers with auth (once)
     headers = {
@@ -312,7 +312,7 @@ def create_jira_tickets(
     created_keys = []
     endpoint = f"{jira_url}/rest/api/3/issue"
 
-    for action_item in action_items:
+    for idx, action_item in enumerate(action_items):
         # Skip empty tasks
         task = action_item.get("task", "").strip() if action_item.get("task") else ""
         if not task:
@@ -320,8 +320,11 @@ def create_jira_tickets(
             continue
 
         try:
-            # Build and POST ticket with QA recommendations (with retry on transient errors)
-            payload = build_ticket_payload(action_item, key_points, project_key, qa_recommendations)
+            # Resolve per-item QA data by index
+            item_qa_data = action_item_qa[idx] if idx < len(action_item_qa) else {}
+
+            # Build and POST ticket with per-item QA recommendations (with retry on transient errors)
+            payload = build_ticket_payload(action_item, key_points, project_key, item_qa_data)
             response = with_retry(_post_with_jira_retry, endpoint, json=payload, headers=headers, timeout=30)
 
             if response.status_code == 201:
@@ -332,11 +335,11 @@ def create_jira_tickets(
                 print(f"Created: {ticket_key} — {ticket_url}")
                 logger.info(f"Created ticket {ticket_key}")
 
-                # Create subtasks for QA recommendations if available
-                if qa_recommendations:
-                    test_scenarios = qa_recommendations.get("test_scenarios", [])
+                # Create subtasks for per-item QA test scenarios if available
+                if item_qa_data:
+                    test_scenarios = item_qa_data.get("test_scenarios", [])
                     for scenario in test_scenarios:
-                        description_adf = _build_subtask_description(scenario, qa_recommendations)
+                        description_adf = _build_subtask_description(scenario, item_qa_data)
                         subtask_key = _create_subtask(
                             ticket_key,
                             f"Test: {scenario}",

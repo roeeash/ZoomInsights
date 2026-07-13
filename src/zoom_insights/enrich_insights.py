@@ -106,6 +106,9 @@ def enrich_insights_with_repo_context(insights: dict, repo_path: str, api_key: s
         logger.warning("Could not extract code from repository")
 
     # Build Groq prompt
+    action_items = insights.get("action_items", [])
+    num_items = len(action_items)
+
     prompt = f"""You are a QA engineer reviewing meeting insights for a software project.
 
 Meeting Summary:
@@ -118,17 +121,23 @@ Decisions Made:
 {json.dumps(insights.get("decisions", []), indent=2)}
 
 Action Items:
-{json.dumps(insights.get("action_items", []), indent=2)}
+{json.dumps(action_items, indent=2)}
 
 Repository Code Structure:
 {repo_summary if repo_summary else "(No code files found or unable to read repository)"}
 
-Based on this meeting context and the codebase structure, provide QA testing recommendations as a JSON object with:
-- test_scenarios: Array of test scenarios to validate meeting decisions and action items
-- features_to_add: Array of potential features or enhancements discussed
-- edge_cases_to_cover: Array of edge cases and error conditions to test
+Based on this meeting context and the codebase structure, provide QA testing recommendations for EACH action item.
 
-Return ONLY valid JSON, no other text."""
+CRITICAL: Return EXACTLY {num_items} JSON objects in an array, one per action item, in the same order.
+Each object must have:
+- test_scenarios: Array of test scenarios specific to THIS action item
+- features_to_add: Array of features/enhancements relevant to THIS action item
+- edge_cases_to_cover: Array of edge cases specific to THIS action item
+- technologies: Array of technologies/languages relevant to THIS action item
+- implementation_steps: Array of implementation steps for THIS action item
+
+Return ONLY a valid JSON array with {num_items} objects, no other text.
+Example: [{{"test_scenarios": [...], "features_to_add": [...], ...}}, {{"test_scenarios": [...], ...}}]"""
 
     # Call Groq API
     try:
@@ -150,24 +159,48 @@ Return ONLY valid JSON, no other text."""
 
         # Parse JSON from response
         try:
-            qa_recommendations = json.loads(response_text)
+            qa_data = json.loads(response_text)
         except json.JSONDecodeError:
-            # Try to extract JSON from response text
-            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+            # Try to extract JSON from response text (look for array first, then object)
+            json_match = re.search(r"\[.*\]|\{.*\}", response_text, re.DOTALL)
             if json_match:
-                qa_recommendations = json.loads(json_match.group())
+                qa_data = json.loads(json_match.group())
             else:
                 raise ValueError("No valid JSON found in Groq API response")
 
-        # Validate structure
-        if not isinstance(qa_recommendations, dict):
-            raise ValueError("Groq response is not a JSON object")
+        # Validate and normalize structure
+        if isinstance(qa_data, list):
+            # New format: array of per-action-item QA data
+            action_item_qa = qa_data
+            # Ensure we have the right number of items
+            num_items = len(insights.get("action_items", []))
+            if len(action_item_qa) < num_items:
+                # Pad with empty structures if LLM returned fewer items
+                logger.warning(f"LLM returned {len(action_item_qa)} items but expected {num_items}, padding with empty entries")
+                for _ in range(num_items - len(action_item_qa)):
+                    action_item_qa.append({
+                        "test_scenarios": [],
+                        "features_to_add": [],
+                        "edge_cases_to_cover": [],
+                        "technologies": [],
+                        "implementation_steps": []
+                    })
+            elif len(action_item_qa) > num_items:
+                # Truncate if LLM returned more items
+                action_item_qa = action_item_qa[:num_items]
+        elif isinstance(qa_data, dict):
+            # Old format: single dict (for backward compatibility)
+            # Convert to array with one copy per action item
+            num_items = len(insights.get("action_items", []))
+            action_item_qa = [qa_data.copy() for _ in range(num_items)]
+        else:
+            raise ValueError(f"Invalid response format: expected list or dict, got {type(qa_data)}")
 
         # Add to insights
         enriched = insights.copy()
-        enriched["qa_recommendations"] = qa_recommendations
+        enriched["action_item_qa"] = action_item_qa
 
-        logger.info("Insights enriched with QA recommendations")
+        logger.info(f"Insights enriched with per-action-item QA data ({len(action_item_qa)} items)")
         return enriched
 
     except Exception as e:

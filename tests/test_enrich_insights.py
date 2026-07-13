@@ -43,11 +43,15 @@ class TestEnrichInsights:
             sample_insights, str(repo_path), "test-api-key", model="mixtral-8x7b-32768"
         )
 
-        assert "qa_recommendations" in result
-        assert (
-            result["qa_recommendations"]["test_scenarios"]
-            == ["Test scenario 1", "Test scenario 2"]
-        )
+        assert "action_item_qa" in result
+        # Check that we have per-action-item QA data (one per action item)
+        assert isinstance(result["action_item_qa"], list)
+        assert len(result["action_item_qa"]) > 0
+        # Check structure of per-item QA data
+        for qa_item in result["action_item_qa"]:
+            assert "test_scenarios" in qa_item
+            assert "features_to_add" in qa_item
+            assert "edge_cases_to_cover" in qa_item
         assert all(k in result for k in ["summary", "key_points", "decisions", "action_items"])
 
     def test_enrich_missing_keys(self, tmp_path):
