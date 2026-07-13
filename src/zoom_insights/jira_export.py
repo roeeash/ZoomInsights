@@ -134,6 +134,8 @@ def build_ticket_payload(action_item: dict, key_points: list[str], project_key: 
             qa_recommendations.get("test_scenarios"),
             qa_recommendations.get("features_to_add"),
             qa_recommendations.get("edge_cases_to_cover"),
+            qa_recommendations.get("technologies"),
+            qa_recommendations.get("implementation_steps"),
         ])
 
         if has_qa_content:
@@ -142,6 +144,8 @@ def build_ticket_payload(action_item: dict, key_points: list[str], project_key: 
             adf_content.extend(_render_bullet_section("Test Scenarios:", qa_recommendations.get("test_scenarios", [])))
             adf_content.extend(_render_bullet_section("Features to Add:", qa_recommendations.get("features_to_add", [])))
             adf_content.extend(_render_bullet_section("Edge Cases to Cover:", qa_recommendations.get("edge_cases_to_cover", [])))
+            adf_content.extend(_render_bullet_section("Technologies:", qa_recommendations.get("technologies", [])))
+            adf_content.extend(_render_bullet_section("Implementation Steps:", qa_recommendations.get("implementation_steps", [])))
 
     adf_description = {
         "type": "doc",
@@ -165,8 +169,8 @@ def _build_subtask_description(scenario: str, qa_recommendations: Optional[dict]
 
     Args:
         scenario: Test scenario text (required)
-        qa_recommendations: Optional dict with 'edge_cases_to_cover', 'features_to_add'
-                           to include in subtask for reference
+        qa_recommendations: Optional dict with 'edge_cases_to_cover', 'features_to_add',
+                           'technologies', 'implementation_steps' to include in subtask
 
     Returns:
         Full ADF dict with {"type": "doc", "version": 1, "content": [...]}
@@ -181,6 +185,8 @@ def _build_subtask_description(scenario: str, qa_recommendations: Optional[dict]
     if qa_recommendations:
         adf_content.extend(_render_bullet_section("Edge Cases to Consider:", qa_recommendations.get("edge_cases_to_cover", [])))
         adf_content.extend(_render_bullet_section("Related Features:", qa_recommendations.get("features_to_add", [])))
+        adf_content.extend(_render_bullet_section("Technologies:", qa_recommendations.get("technologies", [])))
+        adf_content.extend(_render_bullet_section("Implementation Steps:", qa_recommendations.get("implementation_steps", [])))
 
     # Return ADF document
     return {
