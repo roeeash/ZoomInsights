@@ -615,12 +615,16 @@ zoom-insights output/<meeting>/insights.json --output-file output/<meeting>/insi
 zoom-insights output/<meeting>/insights.json --repo-path /path/to/repo
 ```
 
-This transparently adds a `qa_recommendations` section with:
-- **Test scenarios** — specific test cases to write based on meeting discussion
-- **Features to add** — code improvements or new features identified
-- **Edge cases to cover** — failure modes and boundary conditions
+**Per-Action-Item Enrichment:**
 
-The enriched insights are better for creating Jira tickets that include concrete QA guidance.
+Enrichment generates **distinct QA recommendations for each action item** in the meeting. Each action item receives its own:
+- **Test scenarios** — specific test cases tailored to that action item
+- **Features to add** — code improvements or enhancements relevant to that item
+- **Edge cases to cover** — failure modes and boundary conditions specific to that action
+- **Technologies** — languages, frameworks, and libraries involved
+- **Implementation steps** — concrete, actionable steps to implement or test that action
+
+This means when you export multiple action items to Jira, each ticket gets its own unique QA recommendations and subtasks—not generic, shared recommendations.
 
 **Note:** Enrichment is optional. If `CLAUDE_API_KEY` is not set, the insights file is left as-is. Just use `zoom-insights output/<meeting>/insights.json` and the system will enrich it automatically if possible.
 
@@ -801,20 +805,46 @@ Discussed Q4 strategy, budget allocation, and timeline. Approved $2M spend.
     "total_estimated_cost_usd": 0.08
   },
 
-  "qa_recommendations": {
-    "test_scenarios": [
-      "Verify budget allocation across departments",
-      "Test approval workflow for Q4 spending"
-    ],
-    "features_to_add": [
-      "Budget dashboard for real-time spending",
-      "Automated approval escalation"
-    ],
-    "edge_cases_to_cover": [
-      "Emergency spending requests over limit",
-      "Multi-currency budget handling"
-    ]
-  }
+  "action_item_qa": [
+    {
+      "test_scenarios": [
+        "Verify budget allocation across departments"
+      ],
+      "features_to_add": [
+        "Budget dashboard for real-time spending"
+      ],
+      "edge_cases_to_cover": [
+        "Emergency spending requests over limit"
+      ],
+      "technologies": [
+        "Python, PostgreSQL, React"
+      ],
+      "implementation_steps": [
+        "Create budget allocation model",
+        "Implement department-level approval logic",
+        "Add audit trail for compliance"
+      ]
+    },
+    {
+      "test_scenarios": [
+        "Test approval workflow for Q4 spending"
+      ],
+      "features_to_add": [
+        "Automated approval escalation"
+      ],
+      "edge_cases_to_cover": [
+        "Multi-currency budget handling"
+      ],
+      "technologies": [
+        "Node.js, MongoDB, Vue.js"
+      ],
+      "implementation_steps": [
+        "Design approval state machine",
+        "Implement escalation notifications",
+        "Add currency conversion logic"
+      ]
+    }
+  ]
 }
 ```
 
@@ -915,9 +945,10 @@ This command:
 2. Auto-enriches with repository-aware QA recommendations (if `CLAUDE_API_KEY` set)
 3. Extracts all action items with owners and due dates
 4. Creates one Jira ticket per action item with:
-   - QA recommendations as subtasks (if enriched)
-   - Meeting context and key points
-   - Speaker attribution (if diarization enabled)
+   - **Unique subtasks for each test scenario** — Each action item gets its own set of test scenarios based on its specific context
+   - **Per-item QA recommendations** — Technologies, implementation steps, edge cases, and features specific to that action item (not generic)
+   - **Meeting context and key points** — Summary and discussion context
+   - **Speaker attribution** (if diarization enabled)
 5. Links tickets back to the original meeting context
 
 Output:
