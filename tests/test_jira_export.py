@@ -642,10 +642,19 @@ class TestCreateJiraTickets:
 
         mocker.patch("zoom_insights.jira_export.requests.post", side_effect=side_effect)
 
+        # Build proper ADF description
+        description_adf = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Test the scenario"}]}
+            ]
+        }
+
         subtask_key = _create_subtask(
             "PROJ-1",
             "Test scenario",
-            "Test the scenario",
+            description_adf,
             "https://test.atlassian.net",
             "test@test.com",
             "token",
@@ -656,6 +665,48 @@ class TestCreateJiraTickets:
         assert subtask_key == "PROJ-1-SUB"
         # POST should have been called twice (retry on timeout)
         assert call_count[0] == 2
+
+    @pytest.mark.unit
+    def test_subtask_descriptions_differ_by_scenario(self, mocker):
+        """Test that subtasks with different scenarios have different descriptions."""
+        from zoom_insights.jira_export import _build_subtask_description
+
+        qa_recommendations = {
+            "test_scenarios": [
+                "Test scenario A",
+                "Test scenario B",
+                "Test scenario C"
+            ],
+            "edge_cases_to_cover": ["Edge case 1"],
+            "features_to_add": ["Feature 1"],
+            "technologies": ["Tech 1"],
+            "implementation_steps": ["Step 1"]
+        }
+
+        # Build descriptions for each scenario
+        desc_a = _build_subtask_description("Test scenario A", qa_recommendations)
+        desc_b = _build_subtask_description("Test scenario B", qa_recommendations)
+        desc_c = _build_subtask_description("Test scenario C", qa_recommendations)
+
+        # Serialize to JSON to compare
+        json_a = json.dumps(desc_a, sort_keys=True)
+        json_b = json.dumps(desc_b, sort_keys=True)
+        json_c = json.dumps(desc_c, sort_keys=True)
+
+        # Each should be different from the others
+        assert json_a != json_b, "Subtask A and B should have different descriptions"
+        assert json_b != json_c, "Subtask B and C should have different descriptions"
+        assert json_a != json_c, "Subtask A and C should have different descriptions"
+
+        # Verify each contains its own scenario text
+        assert "Test scenario A" in json_a
+        assert "Test scenario B" in json_b
+        assert "Test scenario C" in json_c
+
+        # Verify shared context appears in all
+        assert "Edge case 1" in json_a
+        assert "Edge case 1" in json_b
+        assert "Edge case 1" in json_c
 
     def test_jira_no_retry_on_4xx_auth_error(self, mocker):
         """Test that 401 auth error fails immediately without retrying."""
