@@ -383,6 +383,13 @@ def _process_meeting(
     insights = summarize(transcript, groq_client, model=config.llm_model, repo_summary=repo_summary, agent_guidance=agent_guidance)
     logger.info("Insights extracted and validated")
 
+    # Enrich insights with repository context
+    try:
+        insights = enrich_insights_with_repo_context(insights, ".", config.groq_api_key, config.llm_model)
+        logger.info("Insights enriched with repository context")
+    except Exception as e:
+        logger.warning(f"Failed to enrich insights: {e}")
+
     # Generate report
     logger.info("Stage 6: Generating report...")
     write_report(meeting.topic, transcript, insights, "output")
@@ -502,6 +509,13 @@ def _process_local_file(
     agent_guidance = _load_agent_guidance()
     insights = summarize(transcript, groq_client, model=config.llm_model, repo_summary=repo_summary, agent_guidance=agent_guidance)
     logger.info("Insights extracted and validated")
+
+    # Enrich insights with repository context
+    try:
+        insights = enrich_insights_with_repo_context(insights, ".", config.groq_api_key, config.llm_model)
+        logger.info("Insights enriched with repository context")
+    except Exception as e:
+        logger.warning(f"Failed to enrich insights: {e}")
 
     # Generate report
     logger.info("Stage 6: Generating report...")
