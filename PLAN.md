@@ -176,18 +176,18 @@ Rules: every key present; arrays may be empty; never invent owners/dates — use
 - [x] Cycle 31: Local/private backend e2e — 10 tests (1 happy + 3 bad input + 6 staged failures)
 - [x] Cycle 32: Speaker diarization e2e — 14 tests (1 happy + 4 bad input + 6 staged failures + 3 integration)
 - [x] Cycle 33: Sanitization + metrics e2e — 10 tests (1 happy + 3 bad input + 6 staged failures)
-- [ ] Cycle 34: Slack/Teams notify e2e — 10 tests
-- [ ] Cycle 35: Action item tracker e2e — 10 tests
-- [ ] Cycle 36: Docker containerization e2e — shell script tests
-- [ ] Cycle 37: Recurring digest e2e — 11 tests
-- [ ] Cycle 38: RAG Q&A (finish + e2e) — 11 tests
+- [x] Cycle 34: Slack/Teams notify e2e — 10 tests ✓
+- [x] Cycle 35: Action item tracker e2e — 10 tests ✓
+- [x] Cycle 36: Docker containerization e2e — shell script tests ✓
+- [x] Cycle 37: Recurring digest e2e — 11 tests ✓
+- [x] Cycle 38: RAG Q&A (finish + e2e) — 11 tests ✓
 - [x] Cycle 39: Parallel segment transcription — 4 tests
 - [x] Cycle 40: Jira export retry/backoff — 4 tests
 - [x] Cycle 41: In-memory guidance caching — 3 tests
 - [x] Cycle 42: Concurrent batch/digest processing — 4 tests
 - [x] Cycle 43: Bounded API job concurrency — 4 tests
 
-**STATUS: MVP COMPLETE ✓ | OPTIMIZATION PASS COMPLETE ✓ | Cycle 16 COMPLETE ✓ | Cycle 17 COMPLETE ✓ | Cycle 18 COMPLETE ✓ | Cycles 29-33 E2E TESTS COMPLETE ✓ | PERFORMANCE OPTIMIZATIONS 39-43 COMPLETE ✓**
+**STATUS: MVP COMPLETE ✓ | OPTIMIZATION PASS COMPLETE ✓ | Cycle 16 COMPLETE ✓ | Cycle 17 COMPLETE ✓ | Cycle 18 COMPLETE ✓ | Cycles 29-43 E2E & PERFORMANCE COMPLETE ✓ | ALL CORE CYCLES COMPLETE ✓**
 
 ---
 
@@ -2066,6 +2066,8 @@ The following 10 cycles add comprehensive end-to-end tests for Cycles 19-28. Eac
 - [ ] Notify failure never blocks report generation.
 - [ ] Ordering: insights/report written before notify attempted.
 - [ ] Platform detection works for Slack/Teams, gracefully handles unknown.
+
+**Outcome:** ✓ Rewrote `test_e2e_notify.py` with 10 individual test functions (no classes) using pytest-mock. Removed unittest.mock, kept pytestmark = pytest.mark.e2e at module level. Tests verify happy path (notification sent, report written), bad inputs (unknown platform, malformed URL, missing fields), and staged failures (empty flag, unknown platform, 404 response, timeout exception, ordering guarantee). All 10 tests pass, no regressions in 30 total notify tests.
 
 ---
 
